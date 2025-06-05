@@ -12,15 +12,17 @@ import glob
 import sys
 from PIL import ImageTk, Image
 from tkcalendar import DateEntry
+import shutil
 import openpyxl
-from openpyxl.styles import Font, Alignment, PatternFill, Color
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, Alignment, PatternFill
+#from openpyxl.utils import get_column_letter
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent / "Modüller"))
 from Modüller import ajanda
 from Modüller import iptv_modul
 from Modüller import snake_game
 from Modüller.CowsAndBulls import CowsAndBullsGame
+from Modüller.AnalogSaatEmbed import AnalogSaatEmbed
 from Modüller.harita import MapViewer
 from Modüller.hakkinda import show_about
 
@@ -43,55 +45,90 @@ except locale.Error:
     except locale.Error:
         print("Uyarı: Türkçe yerel ayarları (tr_TR.UTF-8 veya turkish) bulunamadı. Sıralama varsayılan şekilde yapılacak.")
 
-# Çıkış dizinleri
-BACKUP_DIR = "Yedeklenmis Veriler" # .csv Yedekleme dizini
-EXCEL_OUTPUT_DIR = "Excel'e Aktarılanlar" # Excel çıktıları için çıktı klasörü
-HBTC_FORM_OUTPUT_DIR = "HBTC Kalite Kontrol" # Word formları için çıktı klasörü
-SABLONLAR_DIR = "Sablonlar" # Word ve Excel çıktıları için şablon klasörü
+ANA_DIZIN = os.path.dirname(os.path.abspath(__file__)) # Ana Dizin 
+MODULES_DIR = os.path.join(ANA_DIZIN, "Modüller") # Modülleri koyduğumuz dizin 
+RESOURCES_DIR = os.path.join(ANA_DIZIN, "Resources") # Programda kullanılan dosyaları koyduğumuz dizin (ikon vs)
+BACKUP_DIR = os.path.join(ANA_DIZIN, "Yedeklenmis Veriler") # .csv Yedekleme dizini
+EXCEL_OUTPUT_DIR = os.path.join(ANA_DIZIN, "Excel'e Aktarılanlar") # Excel çıktıları için çıktı klasörü
+HBTC_FORM_OUTPUT_DIR = os.path.join(ANA_DIZIN, "HBTC Kalite Kontrol") # Word formları için çıktı klasörü
+SABLONLAR_DIR = os.path.join(ANA_DIZIN, "Sablonlar") # Word ve Excel çıktıları için şablon klasörü
 
-# Veri dosyaları
-HBTC_SABLON_DOSYASI = "HBTC_KALITE_KONTROL_FORMU.docx"
-KALITE_KONTROL_EXCEL_SABLON_DOSYASI = "Kalite_Kontrol_Verileri_Sablon.xlsx"
-YUZDE_SAPMA_EXCEL_SABLON_DOSYASI = "Yuzde_Sapma_Verileri_Sablon.xlsx"
-CALENDAR_ICON_PATH = "Resources\\calendar.ico" # Takvim simgesi
-APP_ICON_PATH = "Resources\\app_icon.ico" # Uygulama simgesi
-VERITABANI_DOSYASI_ADI = "veriler.db" # Database dosyası
+VERITABANI_DOSYASI = os.path.join(ANA_DIZIN, "veriler.db") # Database dosyası
+HBTC_SABLON_DOSYASI = os.path.join(SABLONLAR_DIR,"HBTC_KALITE_KONTROL_FORMU.docx")
+SABLON_KARSILASTIRMA_DOSYASI = os.path.join(SABLONLAR_DIR, "GLUKOMETRE_CIHAZI_KARSILASTIRMA_SONUC_FORMU.xlsx")
+KALITE_KONTROL_EXCEL_SABLON_DOSYASI = os.path.join(SABLONLAR_DIR,"Kalite_Kontrol_Verileri_Sablon.xlsx")
+YUZDE_SAPMA_EXCEL_SABLON_DOSYASI = os.path.join(SABLONLAR_DIR,"Yuzde_Sapma_Verileri_Sablon.xlsx")
+CALENDAR_ICON_PATH = os.path.join(RESOURCES_DIR, "calendar.ico")  # Takvim simgesi
+APP_ICON_PATH = os.path.join(RESOURCES_DIR, "app_icon.ico") # Uygulama simgesi
+
 PROGRAM_AYARLARI_TABLO_ADI = "program_ayarlari"
+BACKGROUND_COLOR = "#494848"
 
 class ToolTip:
-    def __init__(self, widget, text):
+    def __init__(self, widget, text='widget info'):
         self.widget = widget
         self.text = text
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
+        self.widget.bind("<Enter>", self.enter)
+        self.widget.bind("<Leave>", self.leave)
+        self.id = None
+        self.tw = None # Toplevel penceresi için referans
 
-    def show_tooltip(self, event=None):
-        x, y, _, _ = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 25
+    def enter(self, event=None):
+        self.schedule()
 
-        self.tooltip_window = tk.Toplevel(self.widget)
-        self.tooltip_window.wm_overrideredirect(True)
-        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+    def leave(self, event=None):
+        self.unschedule()
+        self.hidetip()
 
-        label = tk.Label(self.tooltip_window, text=self.text, justify='left',
-                        background="#ffffe0", relief='solid', borderwidth=1,
-                        font=("tahoma", "10", "normal"))
+    def schedule(self):
+        self.unschedule()
+        # Tooltip'in görünmeden önceki bekleme süresi (milisaniye)
+        self.id = self.widget.after(500, self.showtip) 
+
+    def unschedule(self):
+        id_ = self.id
+        self.id = None
+        if id_:
+            self.widget.after_cancel(id_)
+
+    # --- BU METODU GÜNCELLEYİN ---
+    def showtip(self, event=None): 
+        # Eğer tooltip penceresi zaten varsa veya metin yoksa bir şey yapma
+        if self.tw or not self.text:
+            return
+
+        # Widget'ın görünür olup olmadığını kontrol et
+        if not self.widget.winfo_ismapped():
+            self.hidetip() # Widget görünür değilse tooltip'i gizle
+            return
+
+        # Widget'ın ekran koordinatlarını al. Tooltip'i widget'ın hemen altında ve biraz sağında gösterecek şekilde ayarla
+        x = self.widget.winfo_rootx() + 20 
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 1 
+
+        self.tw = tk.Toplevel(self.widget)
+        self.tw.wm_overrideredirect(True)  # Pencere kenarlıklarını kaldır
+        self.tw.wm_geometry(f"+{x}+{y}")  # Pozisyonu ayarla
+
+        label = tk.Label(self.tw, text=self.text, justify='left',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("tahoma", "10", "normal"))
         label.pack(ipadx=1)
 
-    def hide_tooltip(self, event=None):
-        if self.tooltip_window:
-            self.tooltip_window.destroy()
-        self.tooltip_window = None
+    def hidetip(self):
+        tw = self.tw
+        self.tw = None # Referansı sıfırla
+        if tw:
+            tw.destroy()
 
 class MainWindow:
     def __init__(self, master):
         self.master = master
         master.title("GLUKOMETRE TAKİP PROGRAMI")
         master.geometry("1300x700")
+        self.master.configure(bg=BACKGROUND_COLOR)
         master.resizable(True, True)
-        master.iconbitmap(APP_ICON_PATH.replace("\\", "/"))
+        master.iconbitmap(APP_ICON_PATH)
 
         # Veritabanından kayıtlı pencere durumunu yükle
         is_maximized = self.program_ayari_yukle("window_maximized", "0")
@@ -128,7 +165,7 @@ class MainWindow:
         self.frm_glukometre_genel = ttk.LabelFrame(self.frm_sol_panel, text="Glukometre Bilgileri", style="Glukometre.TLabelframe")
         self.frm_glukometre_genel.pack(padx=5, pady=5, fill="x", expand=False)
 
-        ttk.Label(self.frm_glukometre_genel, text="Glukometrenin Geldiği Birim:").pack(fill="x", padx=5, pady=(5,0))
+        ttk.Label(self.frm_glukometre_genel, text="Birim/Ünite/Servis Adı:").pack(fill="x", padx=5, pady=(5,0))
         self.cmb_birim = ttk.Combobox(self.frm_glukometre_genel, state="readonly")
         self.cmb_birim.pack(fill="x", padx=5, pady=(0,5))
         self.cmb_birim.bind("<<ComboboxSelected>>", self.on_birim_cihaz_secildi)
@@ -237,8 +274,41 @@ class MainWindow:
         self.cmb_son4hane.bind("<FocusOut>", self.on_son4hane_changed)
         self.cmb_son4hane.bind("<KeyRelease>", self.validate_son4hane_input)
 
+        # --- Analog Saat Alanı ---
+        # Analog Saat Alanı
+        clock_widget_actual_size = 220  # frm_sol_panel'in genişliği 270. Saat için uygun bir boyut seçelim. Saatin kaplayacağı gerçek piksel boyutu (kare)
+                                        # Bu değeri frm_sol_panel genişliğine ve istediğiniz görünüme göre ayarlayabilirsiniz.
+        sol_panel_bg = self.style.lookup('SolPanel.TFrame', 'background')
+        if not sol_panel_bg:
+            sol_panel_bg = "white"
+
+        self.analog_saat_canvas = tk.Canvas(self.frm_sol_panel,
+                                            width=clock_widget_actual_size,
+                                            height=clock_widget_actual_size,
+                                            bg=sol_panel_bg,
+                                            highlightthickness=0, cursor="hand2")
+        self.analog_saat_canvas.pack(side="top", pady=(5, 5))
+
+        try:
+            self.analog_saat_instance = AnalogSaatEmbed(self.analog_saat_canvas, size=clock_widget_actual_size, canvas_bg_color=sol_panel_bg)
+            self.analog_saat_instance.start()
+        except Exception as e:
+            print(f"Analog saat başlatılamadı: {e}")
+            self.analog_saat_instance = None
+
+        # Analog Saate Tooltip Ekleme
+        ToolTip(self.analog_saat_canvas, "Alarm, Geri Sayım ve Kronometre aracını açmak için tıklayın.")
+        
+        # Analog Saate Tıklama Olayı Ekleme
+        self.analog_saat_canvas.bind("<Button-1>", lambda event: self.launch_countdown_alarm())
+
+        self.lbl_tarih = ttk.Label(self.frm_sol_panel, text=self.get_turkish_datetime_str(datetime.now()), anchor="center", font=("Arial", 14, "bold"), foreground="#0F2E4C", cursor="hand2")
+        self.lbl_tarih.pack(pady=(0, 15))
+        self.lbl_tarih.bind("<Button-1>", lambda e: self.launch_calendar())
+        ToolTip(self.lbl_tarih, "Ajandayı açmak için tıklayın.")
+
         self.frm_radyo = ttk.LabelFrame(self.frm_sol_panel, text="Radyo", style="Radyo.TLabelframe")
-        self.frm_radyo.pack(side="bottom", fill="x", padx=5, pady=(0,5))
+        self.frm_radyo.pack(side="bottom", fill="x")
 
         self.cmb_radyo = ttk.Combobox(self.frm_radyo, state="readonly")
         self.radio_station_names, self.radio_station_map = self.radyo_istasyonlar_comboboxa_yukle()
@@ -349,30 +419,14 @@ class MainWindow:
 
         self.radio_process = None
         self.update_radio_button_states()
-        self.cmb_radyo.bind("<<ComboboxSelected>>", self.on_radio_station_selected)
+        self.cmb_radyo.bind("<<ComboboxSelected>>", self.comboboxtan_radyo_degistir)
 
         # Mute durumunu takip etmek için bir değişken
         self.is_muted = False
         self.previous_volume = self.radio_volume.get() # Başlangıçta mevcut ses seviyesini sakla
 
-        # Veri İşleniyor Label'ı
-        self.lbl_islem_durumu = ttk.Label(self.frm_sol_panel, text="Veri İşleniyor. Lütfen Bekleyiniz...",
-                                          font=("Arial", 12, "italic"), background="black", foreground="white",)
-        self.islem_label_visible = False
-        self.blinking_after_id = None
-
-        # Dijital saat
-        self.renk_saat_bg = "#000000"
-        self.renk_saat_fg = "#0DF7F7"
-        self.lbl_dijital_saat = tk.Label(self.frm_sol_panel, text="", font=("DS-Digital", 24, "bold"),
-                                          background=self.renk_saat_bg, foreground=self.renk_saat_fg,
-                                          relief="sunken", borderwidth=0)
-        self.lbl_dijital_saat.pack(side="bottom", fill="x", padx=5, pady=(0,5))
-
-        self.status_bar = tk.Label(self.master, text="", relief="sunken", anchor="w", font=("Arial", 10))
+        self.status_bar = tk.Label(self.master, text="", relief="sunken", anchor="w", font=("Arial", 10, "bold"))
         self.status_bar.pack(side="bottom", fill="x")
-
-        self.dijital_saat_ve_takvim_guncelle()
         self.veritabanindan_verileri_cek()
 
         # Combobox seçim değişikliklerini ayarlara kaydet
@@ -403,32 +457,27 @@ class MainWindow:
 
         self.map_viewer = MapViewer(self.master)
 
-    def dijital_saat_ve_takvim_guncelle(self):
-        simdiki_zaman = datetime.now().strftime("%d %b %Y\n %H:%M:%S")
-        self.lbl_dijital_saat.config(text=simdiki_zaman)
-        self.master.after(1000, self.dijital_saat_ve_takvim_guncelle)
+    def launch_countdown_alarm(self):
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            countdown_alarm_path = os.path.join(script_dir, "Modüller", "Countdown_Alarm.py")
+            if not os.path.exists(countdown_alarm_path):
+                messagebox.showerror("Hata", f"'Countdown_Alarm.py' dosyası bulunamadı:\n{countdown_alarm_path}", parent=self.master)
+                return
+            subprocess.Popen([sys.executable, countdown_alarm_path])
+        except Exception as e:
+            messagebox.showerror("Hata", f"Countdown Alarm uygulaması başlatılamadı:\n{e}", parent=self.master)
 
-    def start_islem_label(self):
-        if not self.islem_label_visible:
-            self.lbl_islem_durumu.pack(fill="x", padx=5, pady=(0,5))
-            self.islem_label_visible = True
-        self._blink_islem_label()
 
-    def stop_islem_label(self):
-        if self.islem_label_visible:
-            self.lbl_islem_durumu.pack_forget()
-            self.islem_label_visible = False
-            if self.blinking_after_id:
-                self.master.after_cancel(self.blinking_after_id)
-                self.blinking_after_id = None
-            self.lbl_islem_durumu.config(foreground="blue")
+    def get_turkish_datetime_str(self, dt_object):
+        days_tr = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+        months_tr_short = ["Oca", "Şub", "Mar", "Nis", "May", "Haz",
+                        "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"]
 
-    def _blink_islem_label(self):
-        if self.islem_label_visible:
-            current_color = self.lbl_islem_durumu.cget("foreground")
-            new_color = "blue" if str(current_color) == "white" else "white"
-            self.lbl_islem_durumu.config(foreground=new_color)
-            self.blinking_after_id = self.master.after(500, self._blink_islem_label)
+        day_name = days_tr[dt_object.weekday()]
+        month_name = months_tr_short[dt_object.month - 1]
+        
+        return f"{dt_object.day} {month_name} {dt_object.year} {day_name}"
 
     def create_tabs(self):
         self.tab1 = ttk.Frame(self.notebook)
@@ -471,7 +520,7 @@ class MainWindow:
 
         columns_kalite = (
             "No", "Tarih", "Cihaz Tipi - Marka", "Cihaz Seri No", "L1", "L2", "L3",
-            "Glukometrenin Geldiği Birim", "Bir Sonraki Gelinecek Tarih"
+            "Birim/Ünite/Servis Adı", "Bir Sonraki Gelinecek Tarih"
         )
         self.tree_kalite = ttk.Treeview(self.tab1, columns=columns_kalite, show="headings", selectmode="extended")
         self.tree_kalite.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
@@ -504,23 +553,38 @@ class MainWindow:
         self.tab2.grid_rowconfigure(0, weight=0)
 
         frm_yuzde_input = ttk.LabelFrame(self.tab2, text="Yüzde Sapma Değer Girişi", style="YuzdeInput.TLabelframe")
-        frm_yuzde_input.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        frm_yuzde_input.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frm_yuzde_input, text="Glukometre Ölçümü:", font= ("Arial", 12, "bold"), 
-                  foreground="#83198D").grid(row=0, column=0, padx=5, pady=5)
-        self.txt_glukometre_yuzde = ttk.Entry(frm_yuzde_input, width=4, font= ("Arial", 12, "bold"), justify='center')
-        self.txt_glukometre_yuzde.grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(frm_yuzde_input, text="Hasta Ad Soyad:", font=("Arial", 10, "bold"), foreground="#000000").grid(row=0, column=0, padx=5, pady=5)
+        
+        self.txt_hasta_ad_soyad = ttk.Entry(frm_yuzde_input, width=35, font=("Arial", 10, "bold"), justify='left')
+        self.txt_hasta_ad_soyad.grid(row=0, column=1, padx=5, pady=5)
+        ToolTip(self.txt_hasta_ad_soyad, "Gelen kan numunesinin ait olduğu hastanın adı ve soyadı.")
+
+        def on_hasta_ad_soyad_key_release(event): #Hasta ad soyad daima büyük harf yazılır
+            widget = event.widget
+            current_text = widget.get()
+            cursor_pos = widget.index(tk.INSERT)
+            widget.delete(0, tk.END)
+            widget.insert(0, current_text.upper())
+            widget.icursor(cursor_pos)
+
+        self.txt_hasta_ad_soyad.bind("<KeyRelease>", on_hasta_ad_soyad_key_release)
+
+        ttk.Label(frm_yuzde_input, text="Glukometre Sonucu (mg/dl):", font=("Arial", 10, "bold"), foreground="#000000").grid(row=0, column=2, padx=10, pady=5)   
+        
+        self.txt_glukometre_yuzde = ttk.Entry(frm_yuzde_input, width=4, font= ("Arial", 10, "bold"), justify='center')
+        self.txt_glukometre_yuzde.grid(row=0, column=3, padx=5, pady=5)
         ToolTip(self.txt_glukometre_yuzde, "Gelen kan numunesinin Glukometre cihazında ölçtüğünüz ölçüm değerini giriniz.")    
         
-        ttk.Label(frm_yuzde_input, text="Laboratuvar Ölçümü:", font= ("Arial", 12, "bold"), 
-                  foreground="#10AA5D").grid(row=0, column=2, padx=5, pady=5)
-        self.txt_lab_yuzde = ttk.Entry(frm_yuzde_input, width=4, font= ("Arial", 12, "bold"), justify='center')
-        self.txt_lab_yuzde.grid(row=0, column=3, padx=5, pady=5)
+        ttk.Label(frm_yuzde_input, text="Otoanalizör Sonucu (mg/dl):", font= ("Arial", 10, "bold"), foreground="#000000").grid(row=0, column=4, padx=10, pady=5)
+        self.txt_lab_yuzde = ttk.Entry(frm_yuzde_input, width=4, font= ("Arial", 10, "bold"), justify='center')
+        self.txt_lab_yuzde.grid(row=0, column=5, padx=5, pady=5)
         ToolTip(self.txt_lab_yuzde, "Gelen kan numunesinin Laboratuar Otoanalizör cihazında ölçülen ölçüm değerini giriniz.")    
 
-        ttk.Button(frm_yuzde_input, text="Hesapla ve Tabloya Aktar", command=self.yuzde_sapma_hesapla_ve_aktar).grid(row=0, column=4, padx=20, pady=5)
+        ttk.Button(frm_yuzde_input, text="Hesapla ve Tabloya Aktar", command=self.yuzde_sapma_hesapla_ve_aktar).grid(row=0, column=6, padx=5, pady=5)
 
-        columns_yuzde = ("No", "Tarih", "Cihaz Tipi-Marka", "Cihaz Seri No", "Glukometre Ölçümü", "Lab. Ölçümü", "Sapma %", "Glukometrenin Geldiği Birim", "Bir Sonraki Gelinecek Tarih")
+        columns_yuzde = ("No", "Tarih", "Cihaz Marka", "Cihaz Seri No", "Birim/Ünite/Servis Adı", "Hasta Ad Soyad", "Glukometre Sonucu", "Oto analizör Sonucu", "% Sapma Oranı", "Değerlendirme Sonucu", "Bir Sonraki Gelinecek Tarih")
         self.tree_yuzde = ttk.Treeview(self.tab2, columns=columns_yuzde, show="headings", selectmode="extended")
         self.tree_yuzde.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
 
@@ -531,10 +595,10 @@ class MainWindow:
         self.tree_yuzde.configure(yscrollcommand=vsb_yuzde.set, xscrollcommand=hsb_yuzde.set)
         self.tree_yuzde.tag_configure('high_deviation_tree', background='red', foreground='white')
 
-        widths_yuzde = [20, 50, 155, 80, 100, 70, 40, 150, 150]
+        widths_yuzde = [30, 65, 85, 110, 170, 170, 50, 50, 60, 120, 120]
         for col, w in zip(columns_yuzde, widths_yuzde):
             self.tree_yuzde.heading(col, text=col, command=lambda c=col: self.treeview_sort_column(self.tree_yuzde, c, False))
-            self.tree_yuzde.column(col, width=w, anchor=tk.CENTER, minwidth=w)
+            self.tree_yuzde.column(col, width=w, anchor=tk.W, stretch=False, minwidth=w)
 
         self.tree_yuzde.bind("<Double-1>", lambda event: self.on_double_click(event, self.tree_yuzde))
         self.tree_yuzde.bind("<Button-3>", lambda event: self.show_context_menu(event, self.tree_yuzde))
@@ -545,7 +609,7 @@ class MainWindow:
 
 
     def program_ayarlarini_yukle(self):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {PROGRAM_AYARLARI_TABLO_ADI} (
@@ -558,7 +622,7 @@ class MainWindow:
 
     def program_ayari_kaydet(self, key, value):
         try:
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
             cursor.execute(f"INSERT OR REPLACE INTO {PROGRAM_AYARLARI_TABLO_ADI} (key, value) VALUES (?, ?)", (key, value))
             conn.commit()
@@ -568,7 +632,7 @@ class MainWindow:
 
     def program_ayari_yukle(self, key, default=None):
         try:
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
             cursor.execute(f"SELECT value FROM {PROGRAM_AYARLARI_TABLO_ADI} WHERE key = ?", (key,))
             result = cursor.fetchone()
@@ -578,7 +642,7 @@ class MainWindow:
             print(f"DB Ayar yükleme hatası ({key}): {e}")
             return default
 
-    def on_radio_station_selected(self, event=None): # Comboboxtan başka bir radyo seçilince        
+    def comboboxtan_radyo_degistir(self, event=None): # Comboboxtan başka bir radyo seçilince        
         if self.radio_process and self.radio_process.poll() is None: # Radyo çalıyorsa önce durdur
             self.stop_radio()           
             self.master.after(200, self.play_radio_command) # ffplay in durmasını bekle, sonra mevcut ses seviyesi ile yeni radyo çal 
@@ -721,66 +785,102 @@ class MainWindow:
             self.marquee_job = self.master.after(200, self.marquee_update)
 
     def statusbar_guncelle(self):
-        current_date = datetime.now().strftime("%d.%m.%Y")
+        # Kayıtlı cihaz sayısını veritabanından çek
+        kayitli_cihaz_sayisi = 0
+        try:
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM cihaz_kayitlari")
+            result = cursor.fetchone()
+            if result:
+                kayitli_cihaz_sayisi = result[0]
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"DB Kayıtlı cihaz sayısı alınırken hata: {e}")
+
         kalite_count = len(self.tree_kalite.get_children()) if hasattr(self, 'tree_kalite') else 0
         yuzde_count = len(self.tree_yuzde.get_children()) if hasattr(self, 'tree_yuzde') else 0
-        status_text = f"Tarih: {current_date} | Kalite Kontrol Ölçümleri: {kalite_count} | Yüzde Sapma Ölçümleri: {yuzde_count}"
+        status_text = f"Envantere Kayıtlı Cihaz Sayısı: {kayitli_cihaz_sayisi}   |   Kalite Kontrol Ölçümleri: {kalite_count}   |   Yüzde Sapma Ölçümleri: {yuzde_count}"
         self.status_bar.config(text=status_text)
 
     def veritabani_olustur(self):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
-        cursor = conn.cursor()
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
+            cursor = conn.cursor()
 
-        # Birimler Tablosu
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS birimler (
-                birim_adi TEXT PRIMARY KEY
-            )
-        """)
+            # Birimler Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS birimler (
+                    birim_adi TEXT PRIMARY KEY
+                )
+            """)
 
-        # Cihaz Tipleri Tablosu
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cihaz_tipleri (
-                cihaz_tipi TEXT PRIMARY KEY
-            )
-        """)
+            # Cihaz Tipleri Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cihaz_tipleri (
+                    cihaz_tipi TEXT PRIMARY KEY
+                )
+            """)
 
-        # Cihaz Serileri Tablosu
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cihaz_serileri (
-                cihaz_seri TEXT PRIMARY KEY,
-                cihaz_tipi TEXT NOT NULL
-            )
-        """)
+            # Cihaz Serileri Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cihaz_serileri (
+                    cihaz_seri TEXT PRIMARY KEY,
+                    cihaz_tipi TEXT NOT NULL
+                )
+            """)
 
-        # Mevcut tabloya sütun ekleme (eğer varsa)
-        try:
-            cursor.execute("ALTER TABLE cihaz_serileri ADD COLUMN cihaz_tipi TEXT")
-        except sqlite3.OperationalError:
-            pass  # Sütun zaten var
+            # Mevcut cihaz_serileri tablosuna cihaz_tipi sütununu ekleme (eski versiyon uyumluluğu için)
+            try:
+                cursor.execute("ALTER TABLE cihaz_serileri ADD COLUMN cihaz_tipi TEXT NOT NULL DEFAULT 'Bilinmiyor'") # DEFAULT eklendi
+            except sqlite3.OperationalError:
+                pass  # Sütun zaten var veya başka bir hata (örn: NOT NULL constraint default olmadan)
 
-        # Radyolar Tablosu
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS radyolar (
-                radyo_adi TEXT PRIMARY KEY,
-                radyo_url TEXT NOT NULL
-            )
-        """)
+            # Radyolar Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS radyolar (
+                    radyo_adi TEXT PRIMARY KEY,
+                    radyo_url TEXT NOT NULL
+                )
+            """)
 
-        # Cihaz Kayıtları Tablosu (Zaten Mevcut)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cihaz_kayitlari (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                birim_adi TEXT NOT NULL,
-                cihaz_tipi TEXT NOT NULL,
-                cihaz_seri TEXT NOT NULL,
-                son_4_hane TEXT NOT NULL,
-                UNIQUE (cihaz_tipi, cihaz_seri, son_4_hane)
-            )
-        """)
+            # Cihaz Kayıtları Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cihaz_kayitlari (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    birim_adi TEXT NOT NULL,
+                    cihaz_tipi TEXT NOT NULL,
+                    cihaz_seri TEXT NOT NULL,
+                    son_4_hane TEXT NOT NULL,
+                    uretim_yili TEXT,
+                    satin_alma_tarihi TEXT,
+                    temsilci_firma TEXT,
+                    UNIQUE (cihaz_tipi, cihaz_seri, son_4_hane)
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            # Üretim Tarihleri Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS uretim_tarihleri (
+                    uretim_yili TEXT PRIMARY KEY
+                )
+            """)
+
+            # Satın Alma Tarihleri Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS satin_alma_tarihleri (
+                    satin_alma_tarihi TEXT PRIMARY KEY
+                )
+            """)
+
+            # Temsilci Firmalar Tablosu
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS temsilci_firmalar (
+                    temsilci_firma_adi TEXT PRIMARY KEY
+                )
+            """)
+
+            conn.commit()
+            conn.close()
 
     def veritabanindan_verileri_cek(self):
         self.birimleri_comboboxa_yukle()
@@ -790,7 +890,6 @@ class MainWindow:
         self.initialize_agenda_module()
 
     def otomatik_yedek_yukle(self):# Başlangıçta Yedekleme klasöründen en son yedek dosyalarını otomatik yükle
-        self.start_islem_label()
         self.master.update_idletasks()
         try:
             load_kalite_files, load_yuzde_files = [], []
@@ -819,7 +918,7 @@ class MainWindow:
                 except Exception as e: messagebox.showerror("CSV Yükleme Hatası", f"'{os.path.basename(file_path)}' yüklenirken hata: {e}", parent=self.master)
 
             expected_yuzde_headers = self.tree_yuzde['columns']
-            sapma_str_idx = list(expected_yuzde_headers).index("Sapma %") if "Sapma %" in expected_yuzde_headers else -1
+            sapma_str_idx = list(expected_yuzde_headers).index("% Sapma Oranı") if "% Sapma Oranı" in expected_yuzde_headers else -1
             for file_path in load_yuzde_files:
                 try:
                     with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
@@ -844,73 +943,68 @@ class MainWindow:
             if loaded_kalite: self.guncelle_no_sutunu(self.tree_kalite, True)
             if loaded_yuzde: self.guncelle_no_sutunu(self.tree_yuzde, False)
         finally:
-            self.stop_islem_label()
             self.statusbar_guncelle()
 
     def manuel_yedek_yukle(self): # Yedek dosyalarını seç ve manuel olarak yükle
         if not messagebox.askokcancel("Onay", "Mevcut tablo verileri silinecek ve seçilen yedekler yüklenecektir.\nDevam etmek istiyor musunuz?", parent=self.master):
             return
 
-        self.start_islem_label()
         self.master.update_idletasks()
-        try:
-            kalite_files = [f for f in glob.glob(os.path.join(BACKUP_DIR, "Kalite_Kontrol_Olcumleri_Yedek_*.csv")) if not os.path.basename(f).startswith('~$') and os.path.getsize(f) > 0]
-            yuzde_files = [f for f in glob.glob(os.path.join(BACKUP_DIR, "Yuzde_Sapma_Olcumleri_Yedek_*.csv")) if not os.path.basename(f).startswith('~$') and os.path.getsize(f) > 0]
+        kalite_files = [f for f in glob.glob(os.path.join(BACKUP_DIR, "Kalite_Kontrol_Olcumleri_Yedek_*.csv")) if not os.path.basename(f).startswith('~$') and os.path.getsize(f) > 0]
+        yuzde_files = [f for f in glob.glob(os.path.join(BACKUP_DIR, "Yuzde_Sapma_Olcumleri_Yedek_*.csv")) if not os.path.basename(f).startswith('~$') and os.path.getsize(f) > 0]
 
-            if not kalite_files and not yuzde_files:
-                messagebox.showinfo("Bilgi", "Yüklenecek (boş olmayan) yedek dosya bulunamadı.", parent=self.master)
-                return
+        if not kalite_files and not yuzde_files:
+            messagebox.showinfo("Bilgi", "Yüklenecek (boş olmayan) yedek dosya bulunamadı.", parent=self.master)
+            return
 
-            result = self.yedek_sec_ve_yukle_dialog(kalite_files, yuzde_files)
-            if result:
-                load_kalite_files, load_yuzde_files = result
-                if not load_kalite_files and not load_yuzde_files: return
+        result = self.yedek_sec_ve_yukle_dialog(kalite_files, yuzde_files)
+        if result:
+            load_kalite_files, load_yuzde_files = result
+            if not load_kalite_files and not load_yuzde_files: return
 
-                loaded_kalite, loaded_yuzde = False, False
-                for item in self.tree_kalite.get_children(): self.tree_kalite.delete(item)
-                for item in self.tree_yuzde.get_children(): self.tree_yuzde.delete(item)
-                self.measurement_no_kalite, self.measurement_no_yuzde = 1, 1
+            loaded_kalite, loaded_yuzde = False, False
+            for item in self.tree_kalite.get_children(): self.tree_kalite.delete(item)
+            for item in self.tree_yuzde.get_children(): self.tree_yuzde.delete(item)
+            self.measurement_no_kalite, self.measurement_no_yuzde = 1, 1
 
-                expected_kalite_headers = self.tree_kalite['columns']
-                for file_path in load_kalite_files:
-                    try:
-                        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                            with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
-                                reader = csv.reader(f, delimiter=';'); headers = next(reader, None)
-                                if headers and tuple(headers) == expected_kalite_headers:
-                                    file_has_data = False
-                                    for row in reader:
-                                        if len(row) == len(expected_kalite_headers): self.tree_kalite.insert("", "end", values=row); file_has_data = True
-                                    if file_has_data: loaded_kalite = True
-                    except Exception as e: messagebox.showerror("CSV Yükleme Hatası", f"'{os.path.basename(file_path)}' yüklenirken hata: {e}", parent=self.master)
+            expected_kalite_headers = self.tree_kalite['columns']
+            for file_path in load_kalite_files:
+                try:
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
+                            reader = csv.reader(f, delimiter=';'); headers = next(reader, None)
+                            if headers and tuple(headers) == expected_kalite_headers:
+                                file_has_data = False
+                                for row in reader:
+                                    if len(row) == len(expected_kalite_headers): self.tree_kalite.insert("", "end", values=row); file_has_data = True
+                                if file_has_data: loaded_kalite = True
+                except Exception as e: messagebox.showerror("CSV Yükleme Hatası", f"'{os.path.basename(file_path)}' yüklenirken hata: {e}", parent=self.master)
 
-                expected_yuzde_headers = self.tree_yuzde['columns']
-                sapma_str_idx = list(expected_yuzde_headers).index("Sapma %") if "Sapma %" in expected_yuzde_headers else -1
-                for file_path in load_yuzde_files:
-                    try:
-                        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                            with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
-                                reader = csv.reader(f, delimiter=';'); headers = next(reader, None)
-                                if headers and tuple(headers) == expected_yuzde_headers:
-                                    file_has_data = False
-                                    for i, row in enumerate(reader, start=1):
-                                        if len(row) == len(expected_yuzde_headers):
-                                            tags_to_apply = ()
-                                            if sapma_str_idx != -1:
-                                                try:
-                                                    sapma_val = float(row[sapma_str_idx].replace('%','').strip())
-                                                    if sapma_val > 9.99: tags_to_apply = ('high_deviation_tree',)
-                                                except: pass
-                                            self.tree_yuzde.insert("", "end", values=row, tags=tags_to_apply)
-                                            file_has_data = True
-                                    if file_has_data: loaded_yuzde = True
-                    except Exception as e: messagebox.showerror("CSV Yükleme Hatası", f"'{os.path.basename(file_path)}' yüklenirken hata: {e}", parent=self.master)
-                
-                if loaded_kalite: self.guncelle_no_sutunu(self.tree_kalite, True)
-                if loaded_yuzde: self.guncelle_no_sutunu(self.tree_yuzde, False)
-                self.statusbar_guncelle()
-        finally:
-            self.stop_islem_label()
+            expected_yuzde_headers = self.tree_yuzde['columns']
+            sapma_str_idx = list(expected_yuzde_headers).index("% Sapma Oranı") if "% Sapma Oranı" in expected_yuzde_headers else -1
+            for file_path in load_yuzde_files:
+                try:
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
+                            reader = csv.reader(f, delimiter=';'); headers = next(reader, None)
+                            if headers and tuple(headers) == expected_yuzde_headers:
+                                file_has_data = False
+                                for i, row in enumerate(reader, start=1):
+                                    if len(row) == len(expected_yuzde_headers):
+                                        tags_to_apply = ()
+                                        if sapma_str_idx != -1:
+                                            try:
+                                                sapma_val = float(row[sapma_str_idx].replace('%','').strip())
+                                                if sapma_val > 9.99: tags_to_apply = ('high_deviation_tree',)
+                                            except: pass
+                                        self.tree_yuzde.insert("", "end", values=row, tags=tags_to_apply)
+                                        file_has_data = True
+                                if file_has_data: loaded_yuzde = True
+                except Exception as e: messagebox.showerror("CSV Yükleme Hatası", f"'{os.path.basename(file_path)}' yüklenirken hata: {e}", parent=self.master)                
+            if loaded_kalite: self.guncelle_no_sutunu(self.tree_kalite, True)
+            if loaded_yuzde: self.guncelle_no_sutunu(self.tree_yuzde, False)
+            self.statusbar_guncelle()
+
 
     def yedek_sec_ve_yukle_dialog(self, kalite_files, yuzde_files):
         dialog = tk.Toplevel(self.master)
@@ -989,7 +1083,7 @@ class MainWindow:
              return None
 
     def birimleri_comboboxa_yukle(self):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("SELECT birim_adi FROM birimler")
         results = cursor.fetchall()
@@ -1000,7 +1094,7 @@ class MainWindow:
             self.cmb_birim.current(0)
 
     def cihaz_tiplerini_comboboxa_yukle(self): # Veritabanından Cihaz Tiplerini al ve Combobox a yükle
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("SELECT cihaz_tipi FROM cihaz_tipleri")
         results = cursor.fetchall()
@@ -1018,7 +1112,7 @@ class MainWindow:
         # Seçili cihaz tipini al
         selected_type = self.cmb_device_type.get()
         
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         try:
             if selected_type:
@@ -1054,7 +1148,7 @@ class MainWindow:
             self.cmb_device_serial.set("") # Eğer hiç veri yoksa boş bırak
 
     def radyo_istasyonlar_comboboxa_yukle(self):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("SELECT radyo_adi, radyo_url FROM radyolar")
         results = cursor.fetchall()
@@ -1067,7 +1161,7 @@ class MainWindow:
         return local_radio_station_names, local_radio_station_map
 
     def get_son4hane_for_device(self, birim, tip, seri):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT son_4_hane FROM cihaz_kayitlari
@@ -1079,7 +1173,7 @@ class MainWindow:
         return result[0] if result else ""
 
     def get_son4hane_list_for_device(self, birim, tip, seri):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT son_4_hane FROM cihaz_kayitlari
@@ -1103,7 +1197,7 @@ class MainWindow:
                 return
 
             try:
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 cursor.execute("INSERT INTO birimler (birim_adi) VALUES (?)", (yeni_birim,))
                 conn.commit()
@@ -1151,7 +1245,7 @@ class MainWindow:
             return
         if messagebox.askokcancel("Onay", f"'{secilen}' birimini silmek istediğinize emin misiniz?"):
             try:
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM birimler WHERE birim_adi = ?", (secilen,))
                 conn.commit()
@@ -1169,7 +1263,7 @@ class MainWindow:
             messagebox.showerror("Hata", "Lütfen tüm alanları doldurun ve Seri numarasının son 4 hanesini kontrol edin.")
             return False
 
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         try:
             # Aynı birim, seri, son4hane başka bir cihaz tipine kayıtlı mı?
@@ -1224,7 +1318,7 @@ class MainWindow:
         if not (birim and tip and seri and son4 and len(son4) == 4):
             return  # Tüm alanlar dolu değilse kontrol etme
 
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         try:
             cursor.execute("""
@@ -1246,7 +1340,7 @@ class MainWindow:
             conn.close()
 
     def check_device_availability(self, birim, tip, seri, son4):
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT birim_adi FROM cihaz_kayitlari
@@ -1280,7 +1374,7 @@ class MainWindow:
         new_serial = self.cmb_device_serial.get().strip().upper()
         if new_serial and new_serial not in self.device_serials:
             try:
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 cursor.execute("INSERT OR IGNORE INTO cihaz_serileri (cihaz_seri) VALUES (?)", (new_serial,))
                 conn.commit()
@@ -1319,8 +1413,6 @@ class MainWindow:
             if hasattr(self, 'son4hane_tooltip') and self.son4hane_tooltip.tooltip_window:
                 self.son4hane_tooltip.hide_tooltip()
         return True
-
-
 
     def validate_l_entry(self, P, widget_name, min_val, max_val):
         widget = self.master.nametowidget(widget_name)
@@ -1372,58 +1464,6 @@ class MainWindow:
             return None
         return l1_val, l2_val, l3_val
 
-####################IPTV KODLARI ##############################################
-    def is_iptv_db_empty(self):
-        """iptv_kanallar tablosunun boş olup olmadığını kontrol eder."""
-        try:
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM iptv_kanallar")
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count == 0
-        except sqlite3.Error as e:
-            print(f"IPTV veritabanı kontrol hatası: {e}")
-            return True  # Hata durumunda varsayılan olarak boş kabul et
-
-    def iptv_playlist_yukle_diyalog(self):
-        # Eğer IPTV sekmesi zaten varsa o sekmeye geç
-        for i in range(self.notebook.index("end")):
-            if self.notebook.tab(i, "text") == "IPTV":
-                self.notebook.select(i)
-                return
-
-        # Yoksa sekmeyi oluştur
-        from Modüller import iptv_modul
-        iptv_modul.create_iptv_tab(self, self.notebook, self.iptv_channels)
-        # Sekmeyi seç
-        for i in range(self.notebook.index("end")):
-            if self.notebook.tab(i, "text") == "IPTV":
-                self.notebook.select(i)
-                return
-
-    def load_iptv_playlist(self, url):
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            lines = response.text.splitlines()
-            channels = []
-            name, stream_url = None, None
-
-            for line in lines:
-                if line.startswith("#EXTINF"):
-                    name = line.split(",")[-1].strip()
-                elif line and not line.startswith("#"):
-                    stream_url = line.strip()
-                    if name and stream_url:
-                        channels.append((name, stream_url))
-                        name, stream_url = None, None
-
-        except Exception as e:
-            messagebox.showerror("Hata", f"Playlist yüklenemedi:\n{e}", parent=self.master)
-
-
-########################################################################################
     def cihaz_markasi_ekle_pencere(self):
         def tamam_click():
             yeni_cihaz = entry.get().strip().upper()
@@ -1432,7 +1472,7 @@ class MainWindow:
                 return
             
             try:
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 cursor.execute("INSERT INTO cihaz_tipleri (cihaz_tipi) VALUES (?)", (yeni_cihaz,))
                 conn.commit()
@@ -1485,7 +1525,7 @@ class MainWindow:
                 
         if messagebox.askokcancel("Onay", f"'{secilen}' cihaz markasını silmek istediğinize emin misiniz?"):
             try:
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM cihaz_tipleri WHERE cihaz_tipi = ?", (secilen,))
                 conn.commit()
@@ -1501,7 +1541,7 @@ class MainWindow:
     def open_cihaz_arama_dialog(self):
         dialog = tk.Toplevel(self.master)
         dialog.title("Cihaz Arama")
-        dialog.geometry("800x500")
+        dialog.geometry("800x550")
         dialog.transient(self.master)
         dialog.grab_set()
 
@@ -1566,7 +1606,7 @@ class MainWindow:
         tree_results.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         # Tablo başlıkları ve genişlikleri - Tüm sütunları ortala
-        widths = [190, 170, 150]  # Genişlikleri uyarladık
+        widths = [190, 170, 150]
         for col, width in zip(columns, widths):
             tree_results.heading(col, text=col, 
                             command=lambda c=col: self.treeview_sort_column(tree_results, c, False))
@@ -1576,7 +1616,7 @@ class MainWindow:
             for item in tree_results.get_children():
                 tree_results.delete(item)
 
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
 
             try:
@@ -1659,7 +1699,7 @@ class MainWindow:
     def open_cihaz_ekle_sil_dialog(self):
         dialog = tk.Toplevel(self.master)
         dialog.title("Cihaz Ekle / Sil")
-        dialog.geometry("800x250")
+        dialog.geometry("800x310")
         dialog.transient(self.master)
         dialog.grab_set()
 
@@ -1678,12 +1718,12 @@ class MainWindow:
         dialog.rowconfigure(0, weight=1)
 
         # Cihaz Ekle Frame
-        ekle_frame = ttk.LabelFrame(main_frame, text="Cihaz Ekle", padding=10)
+        ekle_frame = ttk.LabelFrame(main_frame, text="Envantere Cihaz Ekle", padding=10)
         ekle_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
         ekle_frame.columnconfigure(1, weight=1)
 
         # Cihaz Sil Frame
-        sil_frame = ttk.LabelFrame(main_frame, text="Cihaz Sil", padding=10)
+        sil_frame = ttk.LabelFrame(main_frame, text="Envanterden Cihaz Sil", padding=10)
         sil_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
         sil_frame.columnconfigure(1, weight=1)
 
@@ -1717,7 +1757,7 @@ class MainWindow:
                 self.cmb_cihaz_sil.set("")
                 return
 
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT cihaz_tipi FROM cihaz_kayitlari
@@ -1744,7 +1784,7 @@ class MainWindow:
                 self.cmb_seri_no_sil.set("")
                 return
 
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT cihaz_seri FROM cihaz_kayitlari
@@ -1770,7 +1810,7 @@ class MainWindow:
                 self.cmb_son4hane_sil.set("")
                 return
 
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT son_4_hane FROM cihaz_kayitlari
@@ -1797,7 +1837,7 @@ class MainWindow:
                 return
 
             if messagebox.askokcancel("Onay", f"{birim} birimine ait {cihaz_seri_no_tam} seri numaralı {cihaz} cihazını silmek istediğinize emin misiniz?"):
-                conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
                 cursor = conn.cursor()
                 try:
                     cursor.execute("""
@@ -1809,6 +1849,7 @@ class MainWindow:
                     self.cihaz_tiplerini_comboboxa_yukle()
                     self.cihaz_seri_no_lar_comboboxa_yukle()
                     self.on_birim_cihaz_secildi()
+                    self.statusbar_guncelle()
                     dialog.destroy()
                 except sqlite3.Error as e:
                     messagebox.showerror("Veritabanı Hatası", f"Cihaz silinirken hata: {e}")
@@ -1821,40 +1862,102 @@ class MainWindow:
         self.cmb_cihaz_sil.bind("<<ComboboxSelected>>", load_seri_no_sil)
         self.cmb_seri_no_sil.bind("<<ComboboxSelected>>", load_son4hane_sil)
 
-        # 1 - Birim Combobox
+        # 1 - Birim Combobox (ekle_frame içinde)
         ttk.Label(ekle_frame, text="Birim:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         self.cmb_birim_ekle = ttk.Combobox(ekle_frame, state="readonly")
-        self.cmb_birim_ekle['values'] = self.birimler  # Veritabanından birimler
+        self.cmb_birim_ekle['values'] = self.birimler  # Ana penceredeki birimler
         if self.birimler:
             self.cmb_birim_ekle.current(0)
         self.cmb_birim_ekle.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
-        # 2 - Cihaz Combobox
+        # 2 - Cihaz Tipi - Marka Combobox (ekle_frame içinde)
         ttk.Label(ekle_frame, text="Cihaz Tipi - Marka:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.cmb_cihaz_ekle = ttk.Combobox(ekle_frame, state="readonly")
-        self.cmb_cihaz_ekle['values'] = self.device_types  # Veritabanından cihaz tipleri
+        self.cmb_cihaz_ekle['values'] = self.device_types  # Ana penceredeki cihaz tipleri
         if self.device_types:
             self.cmb_cihaz_ekle.current(0)
         self.cmb_cihaz_ekle.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
-        self.cmb_cihaz_ekle.bind("<<ComboboxSelected>>", self.load_seri_no_ekle) # Cihaz tipi seçimi değişince seri numaralarını yükle
+        self.cmb_cihaz_ekle.bind("<<ComboboxSelected>>", self.load_seri_no_ekle)
 
-        # 3 - Seri No Combobox
+        # 3 - Seri No Combobox (ekle_frame içinde)
         ttk.Label(ekle_frame, text="Seri No:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        self.cmb_seri_no_ekle = ttk.Combobox(ekle_frame, state="normal") # state normal olacak
+        self.cmb_seri_no_ekle = ttk.Combobox(ekle_frame, state="normal")
         self.cmb_seri_no_ekle.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+        # self.load_seri_no_ekle() # İlk cihaz tipine göre seri noları yükle
 
-        def seri_no_validate(new_text):
-            return all(c.isalnum() for c in new_text)
-
-        def seri_no_change(event):
-            current_text = self.txt_seri_no_ekle.get()
-            self.txt_seri_no_ekle.delete(0, tk.END)
-            self.txt_seri_no_ekle.insert(0, current_text.upper())
-
-        # 4 - Son 4 Hane Textbox
+        # 4 - Son 4 Hane Textbox (ekle_frame içinde)
         ttk.Label(ekle_frame, text="Son 4 Hane:").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         self.txt_son4hane_ekle = ttk.Entry(ekle_frame)
         self.txt_son4hane_ekle.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
+        # self.txt_son4hane_ekle için KeyRelease event'i ve validate komutu orijinaldeki gibi kalmalı
+
+        # 5 - Üretim Tarihi Combobox (ekle_frame içinde)
+        ttk.Label(ekle_frame, text="Üretim Tarihi:").grid(row=4, column=0, sticky="w", padx=5, pady=5)
+        self.cmb_uretim_tarihi = ttk.Combobox(ekle_frame, state="normal")
+        self.cmb_uretim_tarihi.grid(row=4, column=1, sticky="ew", padx=5, pady=5)
+
+        # 6 - Satın Alma Tarihi Combobox (ekle_frame içinde)
+        ttk.Label(ekle_frame, text="Satın Alma Tarihi:").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        self.cmb_satin_alma_tarihi = ttk.Combobox(ekle_frame, state="normal")
+        self.cmb_satin_alma_tarihi.grid(row=5, column=1, sticky="ew", padx=5, pady=5)
+
+        # 7 - Temsilci Firma Combobox (ekle_frame içinde)
+        ttk.Label(ekle_frame, text="Temsilci Firma:").grid(row=6, column=0, sticky="w", padx=5, pady=5)
+        self.cmb_temsilci_firma = ttk.Combobox(ekle_frame, state="normal")
+        self.cmb_temsilci_firma.grid(row=6, column=1, sticky="ew", padx=5, pady=5)
+
+        try:
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
+            cursor = conn.cursor()
+
+            # Üretim Tarihi için (uretim_tarihleri tablosundan uretim_yili sütunundan)
+            cursor.execute("SELECT uretim_yili FROM uretim_tarihleri ORDER BY uretim_yili")
+            uretim_yillari_list = [r[0] for r in cursor.fetchall()]
+            self.cmb_uretim_tarihi['values'] = uretim_yillari_list
+            if not uretim_yillari_list: # Eğer liste boşsa, örnek bir değer veya boş string ekleyebilirsiniz.
+                self.cmb_uretim_tarihi['values'] = ["Örn: 2023"]
+
+            # Satın Alma Tarihi için (satin_alma_tarihleri tablosundan satin_alma_tarihi sütunundan)
+            cursor.execute("SELECT satin_alma_tarihi FROM satin_alma_tarihleri ORDER BY satin_alma_tarihi")
+            satin_alma_list = [r[0] for r in cursor.fetchall()]
+            self.cmb_satin_alma_tarihi['values'] = satin_alma_list
+            if not satin_alma_list:
+                self.cmb_satin_alma_tarihi['values'] = ["Örn: 01.01.2024"]
+
+            # Temsilci Firma için (temsilci_firmalar tablosundan temsilci_firma_adi sütunundan)
+            cursor.execute("SELECT temsilci_firma_adi FROM temsilci_firmalar ORDER BY temsilci_firma_adi")
+            firmalar_list = [r[0] for r in cursor.fetchall()]
+            self.cmb_temsilci_firma['values'] = firmalar_list
+            if not firmalar_list:
+                 self.cmb_temsilci_firma['values'] = ["Örn: Firma Adı Ltd. Şti."]
+
+            conn.close()
+        except sqlite3.Error as e:
+            # Programın çökmemesi için tablo/sütun yoksa hata mesajı yerine konsola yazdırılabilir.
+            # Kullanıcıya bu tabloları oluşturması gerektiği hatırlatılabilir.
+            print(f"Comboboxlar için özel veri yükleme hatası (Yeni tablolar/sütunlar eksik olabilir): {e}")
+            # Geçici olarak boş değerler veya örnekler atanabilir
+            if not hasattr(self.cmb_uretim_tarihi, 'cget') or not self.cmb_uretim_tarihi['values']:
+                 self.cmb_uretim_tarihi['values'] = ["Veritabanı tablosu eksik olabilir."]
+            if not hasattr(self.cmb_satin_alma_tarihi, 'cget') or not self.cmb_satin_alma_tarihi['values']:
+                 self.cmb_satin_alma_tarihi['values'] = ["Veritabanı tablosu eksik olabilir."]
+            if not hasattr(self.cmb_temsilci_firma, 'cget') or not self.cmb_temsilci_firma['values']:
+                 self.cmb_temsilci_firma['values'] = ["Veritabanı tablosu eksik olabilir."]
+
+        except Exception as e:
+            print(f"Combobox veri yükleme sırasında genel hata: {e}")
+
+        def son4hane_change_ekle(event): # İsim çakışmaması için _ekle eklendi
+            current_text = self.txt_son4hane_ekle.get()
+            self.txt_son4hane_ekle.delete(0, tk.END)
+            self.txt_son4hane_ekle.insert(0, current_text.upper())
+        self.txt_son4hane_ekle.bind("<KeyRelease>", son4hane_change_ekle)
+
+        # Son 4 Hane için validate ve KeyRelease eventleri (orijinaldeki gibi)
+        def son4hane_validate_ekle(new_text): # İsim çakışmaması için _ekle eklendi
+            return len(new_text) <= 4 and all(c.isalnum() for c in new_text)
+        son4hane_vcmd_ekle = (dialog.register(son4hane_validate_ekle), '%P')
+        self.txt_son4hane_ekle.config(validate="key", validatecommand=son4hane_vcmd_ekle)
 
         def son4hane_validate(new_text):
             return all(c.isalnum() for c in new_text)
@@ -1872,44 +1975,97 @@ class MainWindow:
         # 5 - Cihaz Ekle Butonu
         def cihaz_ekle_click():
             birim = self.cmb_birim_ekle.get()
-            cihaz = self.cmb_cihaz_ekle.get()
-            seri_no = self.cmb_seri_no_ekle.get() # Textbox yerine combobox'tan al
-            son4hane = self.txt_son4hane_ekle.get()
+            cihaz_tipi_marka = self.cmb_cihaz_ekle.get()
+            seri_no_ana = self.cmb_seri_no_ekle.get().strip().upper()
+            son_4_hane = self.txt_son4hane_ekle.get().strip().upper()
 
-            if not (birim and cihaz and seri_no and son4hane):
-                messagebox.showerror("Hata", "Lütfen tüm alanları doldurun!")
+            uretim_yili_val = self.cmb_uretim_tarihi.get().strip()
+            satin_alma_tarihi_val = self.cmb_satin_alma_tarihi.get().strip()
+            temsilci_firma_adi_val = self.cmb_temsilci_firma.get().strip()
+            
+            # Gerekli alanların kontrolü
+            if not (birim and cihaz_tipi_marka and seri_no_ana and son_4_hane):
+                messagebox.showerror("Hata", "Birim, Cihaz Tipi, Seri No ve Son 4 Hane alanları doldurulmalıdır!", parent=dialog)
+                return
+            
+            if len(son_4_hane) != 4:
+                messagebox.showerror("Hata", "Son 4 Hane tam olarak 4 karakter olmalıdır!", parent=dialog)
+                self.txt_son4hane_ekle.focus_set()
                 return
 
-            conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
-            cursor = conn.cursor()
-
+            conn = None # bağlantıyı başta None olarak tanımla
             try:
-                # Veritabanına kayıt işlemleri
-                cursor.execute("SELECT cihaz_seri FROM cihaz_serileri WHERE cihaz_seri = ? AND cihaz_tipi = ?", (seri_no, cihaz))
-                existing_serial = cursor.fetchone()
+                conn = sqlite3.connect(VERITABANI_DOSYASI)
+                cursor = conn.cursor()
 
-                if existing_serial:                    
-                    pass # Seri numarası zaten varsa, bu satırı atla
-                else:
-                    cursor.execute("INSERT OR IGNORE INTO cihaz_serileri (cihaz_seri, cihaz_tipi) VALUES (?, ?)", (seri_no, cihaz))
+                # 1. `cihaz_serileri` tablosuna ekleme (cihaz_seri PRIMARY KEY, cihaz_tipi NOT NULL)
+                # Bu tablo, bir seri numarasının hangi tip cihaza ait olduğunu genel olarak listeler.
+                # Eğer aynı seri no farklı tipte eklenmeye çalışılırsa PK hatası verir, INSERT OR IGNORE bunu yakalar.
                 cursor.execute("""
-                    INSERT INTO cihaz_kayitlari (birim_adi, cihaz_tipi, cihaz_seri, son_4_hane)
-                    VALUES (?, ?, ?, ?)
-                """, (birim, cihaz, seri_no, son4hane))
+                    INSERT OR IGNORE INTO cihaz_serileri (cihaz_seri, cihaz_tipi) 
+                    VALUES (?, ?)
+                """, (seri_no_ana, cihaz_tipi_marka))
+
+                # 2. `cihaz_kayitlari` tablosuna asıl cihaz envanter kaydını ekleme
+                # Bu tablo UNIQUE constraint (cihaz_tipi, cihaz_seri, son_4_hane) ile aynı tam cihazın tekrar eklenmesini önler.
+                sql_insert_cihaz_kayitlari = """
+                    INSERT INTO cihaz_kayitlari 
+                    (birim_adi, cihaz_tipi, cihaz_seri, son_4_hane, uretim_yili, satin_alma_tarihi, temsilci_firma)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                cursor.execute(sql_insert_cihaz_kayitlari, 
+                               (birim, cihaz_tipi_marka, seri_no_ana, son_4_hane,
+                                uretim_yili_val if uretim_yili_val and uretim_yili_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 2023"] else None,
+                                satin_alma_tarihi_val if satin_alma_tarihi_val and satin_alma_tarihi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 01.01.2024"] else None,
+                                temsilci_firma_adi_val if temsilci_firma_adi_val and temsilci_firma_adi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: Firma Adı Ltd. Şti."] else None))
+
+                # 3. Yeni girilen Üretim Yılı, Satın Alma Tarihi, Temsilci Firma bilgilerini kendi tablolarına ekle (comboboxları zenginleştirmek için)
+                if uretim_yili_val and uretim_yili_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 2023"]:
+                    cursor.execute("INSERT OR IGNORE INTO uretim_tarihleri (uretim_yili) VALUES (?)", (uretim_yili_val,))
+                
+                if satin_alma_tarihi_val and satin_alma_tarihi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 01.01.2024"]:
+                    cursor.execute("INSERT OR IGNORE INTO satin_alma_tarihleri (satin_alma_tarihi) VALUES (?)", (satin_alma_tarihi_val,))
+                
+                if temsilci_firma_adi_val and temsilci_firma_adi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: Firma Adı Ltd. Şti."]:
+                    cursor.execute("INSERT OR IGNORE INTO temsilci_firmalar (temsilci_firma_adi) VALUES (?)", (temsilci_firma_adi_val,))
+                
                 conn.commit()
-                messagebox.showinfo("Başarılı", "Cihaz başarıyla eklendi.")
-                self.cihaz_tiplerini_comboboxa_yukle()
-                self.cihaz_seri_no_lar_comboboxa_yukle()
+                messagebox.showinfo("Başarılı", f"{cihaz_tipi_marka} ({seri_no_ana}{son_4_hane}) cihazı\n'{birim}' birimine başarıyla eklendi.", parent=dialog)
+                self.statusbar_guncelle()
+                # Diyalogdaki combobox'ları güncelle (yeni eklenen değerler hemen görünsün diye)
+                cursor.execute("SELECT uretim_yili FROM uretim_tarihleri ORDER BY uretim_yili")
+                self.cmb_uretim_tarihi['values'] = [r[0] for r in cursor.fetchall()]
+                
+                cursor.execute("SELECT satin_alma_tarihi FROM satin_alma_tarihleri ORDER BY satin_alma_tarihi")
+                self.cmb_satin_alma_tarihi['values'] = [r[0] for r in cursor.fetchall()]
+
+                cursor.execute("SELECT temsilci_firma_adi FROM temsilci_firmalar ORDER BY temsilci_firma_adi")
+                self.cmb_temsilci_firma['values'] = [r[0] for r in cursor.fetchall()]
+
+                # İsteğe bağlı: Giriş alanlarını temizle ve son girilenleri seçili bırak
+                self.cmb_seri_no_ekle.set("") 
+                self.txt_son4hane_ekle.delete(0, tk.END)
+                self.cmb_uretim_tarihi.set(uretim_yili_val if uretim_yili_val and uretim_yili_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 2023"] else "")
+                self.cmb_satin_alma_tarihi.set(satin_alma_tarihi_val if satin_alma_tarihi_val and satin_alma_tarihi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: 01.01.2024"] else "")
+                self.cmb_temsilci_firma.set(temsilci_firma_adi_val if temsilci_firma_adi_val and temsilci_firma_adi_val not in ["Veritabanı tablosu eksik olabilir.", "Örn: Firma Adı Ltd. Şti."] else "")
+                
+                self.cmb_seri_no_ekle.focus_set() # Yeni kayıt için seri no'ya odaklan
+
+                # Ana penceredeki combobox'ları da güncellemek gerekebilir (programın genel yapısına göre)
+                self.cihaz_tiplerini_comboboxa_yukle() 
+                self.cihaz_seri_no_lar_comboboxa_yukle() 
                 self.on_birim_cihaz_secildi()
-                dialog.destroy() # Ekleme başarılıysa pencereyi kapat
+
+            except sqlite3.IntegrityError as e:
+                 messagebox.showerror("Veritabanı Hatası", f"Cihaz eklenirken bütünlük hatası: {e}\nBu cihaz (Cihaz Tipi+Seri No+Son 4 Hane kombinasyonu ile) zaten '{birim}' biriminde veya başka bir birimde kayıtlı olabilir.\nLütfen girdiğiniz bilgileri kontrol edin.", parent=dialog)
             except sqlite3.Error as e:
-                messagebox.showerror("Veritabanı Hatası", f"Cihaz eklenirken hata: {e}")
+                messagebox.showerror("Veritabanı Hatası", f"Cihaz eklenirken hata: {e}", parent=dialog)
             finally:
-                conn.close()
+                if conn:
+                    conn.close()
 
-        ttk.Button(ekle_frame, text="Cihaz Ekle", command=cihaz_ekle_click).grid(row=4, column=1, sticky="e", padx=5, pady=10)
+        ttk.Button(ekle_frame, text="Cihaz Ekle", command=cihaz_ekle_click).grid(row=7, column=0, columnspan=2, sticky="e", padx=5, pady=10)
 
-        # Pencere boyutlandırma
         dialog.update_idletasks()
         width = dialog.winfo_width()
         height = dialog.winfo_height()
@@ -1925,7 +2081,7 @@ class MainWindow:
             self.cmb_seri_no_ekle['values'] = []
             return
 
-        conn = sqlite3.connect(VERITABANI_DOSYASI_ADI)
+        conn = sqlite3.connect(VERITABANI_DOSYASI)
         cursor = conn.cursor()
         cursor.execute("SELECT cihaz_seri FROM cihaz_serileri WHERE cihaz_tipi = ?", (cihaz_tipi,))
         seri_numaralari = [row[0] for row in cursor.fetchall()]
@@ -1936,6 +2092,146 @@ class MainWindow:
             self.cmb_seri_no_ekle.current(0)
         else:
             self.cmb_seri_no_ekle.set("")
+
+
+    def cihaz_karsilastirma_formu_olustur(self):
+        if not self.tree_yuzde.get_children():
+            messagebox.showinfo("Veri Yok", "Yüzde Sapma tablosunda aktarılacak veri bulunmuyor.", parent=self.master)
+            return
+
+        SABLON_KARSILASTIRMA_DOSYASI = os.path.join(SABLONLAR_DIR, "GLUKOMETRE_CIHAZI_KARSILASTIRMA_SONUC_FORMU.xlsx")
+
+        if not os.path.exists(SABLON_KARSILASTIRMA_DOSYASI):
+            messagebox.showerror("Şablon Bulunamadı",
+                                f"Excel şablon dosyası bulunamadı:\n{SABLON_KARSILASTIRMA_DOSYASI}\n"
+                                f"Lütfen dosyayı '{SABLONLAR_DIR}' klasörüne yerleştirin.",
+                                parent=self.master)
+            return
+
+        self.master.update_idletasks()
+
+        try:
+            # Gerekli sütunların indekslerini al
+            columns_yuzde = self.tree_yuzde['columns']
+            try:
+                tarih_idx = columns_yuzde.index("Tarih")
+                marka_idx = columns_yuzde.index("Cihaz Marka")
+                seri_idx = columns_yuzde.index("Cihaz Seri No")
+                birim_idx = columns_yuzde.index("Birim/Ünite/Servis Adı")
+                hasta_idx = columns_yuzde.index("Hasta Ad Soyad")
+                gluko_idx = columns_yuzde.index("Glukometre Sonucu")
+                oto_idx = columns_yuzde.index("Oto analizör Sonucu")
+                sapma_idx = columns_yuzde.index("% Sapma Oranı")
+                degerlendirme_idx = columns_yuzde.index("Değerlendirme Sonucu")
+            except ValueError as e:
+                messagebox.showerror("Sütun Hatası", f"Yüzde Sapma tablosunda gerekli sütunlardan biri bulunamadı: {e}", parent=self.master)
+                return
+
+            all_data_from_tree = []
+            for row_id in self.tree_yuzde.get_children():
+                values = self.tree_yuzde.item(row_id)['values']
+                all_data_from_tree.append(values)
+
+            if not all_data_from_tree:
+                messagebox.showinfo("Veri Yok", "Yüzde Sapma tablosunda işlenecek veri bulunamadı.", parent=self.master)
+                return
+
+            # Çıktı dosyasını oluşturmak için şablonu kopyala
+            timestamp = datetime.now().strftime('%Y.%m.%d_%H-%M')
+            output_filename = f"Cihaz_Karsilastirma_Formu_{timestamp}.xlsx"
+            output_file_path = os.path.join(EXCEL_OUTPUT_DIR, output_filename)
+
+            shutil.copy(SABLON_KARSILASTIRMA_DOSYASI, output_file_path)
+            wb = openpyxl.load_workbook(output_file_path)
+            original_sheet_in_output_wb_name = wb.sheetnames[0]
+            source_sheet_for_copying = wb[original_sheet_in_output_wb_name]
+            chunk_size = 10
+            data_chunks = [all_data_from_tree[i:i + chunk_size] for i in range(0, len(all_data_from_tree), chunk_size)]
+
+            active_sheet_modified = False
+            for page_index, data_chunk in enumerate(data_chunks):
+                current_sheet = None
+                if page_index == 0:
+                    current_sheet = source_sheet_for_copying
+                    current_sheet.title = "Sayfa1"
+                    active_sheet_modified = True
+                else:
+                    current_sheet = wb.copy_worksheet(source_sheet_for_copying)
+                    current_sheet.title = f"Sayfa{page_index + 1}"
+                for row_num in range(7, 17): # Şablondaki veri başlangıç satırlarına göre ayarlanmış olmalı
+                    for col_num in range(1, 9): # Şablondaki sütun sayısına göre
+                        current_sheet.cell(row=row_num, column=col_num).value = None
+
+                excel_row = 7 # Excel'e veri yazılacak başlangıç satırı
+                for record in data_chunk:
+                    tarih = record[tarih_idx]
+                    marka = record[marka_idx]
+                    seri = record[seri_idx]
+                    birim = record[birim_idx]
+                    hasta = record[hasta_idx]
+                    gluko_sonuc = record[gluko_idx]
+                    oto_sonuc = record[oto_idx]
+                    sapma_oran_str = record[sapma_idx] # Bu '% Sapma Oranı' string değeridir, örn: "10.50%"
+                    # record[degerlendirme_idx] orijinal tek satırlık değerlendirme sonucunu içerir, 
+                    # ama biz bunu sapma_oran_str kullanarak yeniden oluşturacağız.
+
+                    # Sütun 1: Tarih
+                    current_sheet.cell(row=excel_row, column=1, value=tarih)
+                    
+                    # Sütun 2: Marka / Seri No
+                    marka_seri_cell = current_sheet.cell(row=excel_row, column=2)
+                    marka_seri_cell.value = f"{marka}\n{seri}" # Marka ve Seri No aynı Hücre içinde alt alta yaz
+                    marka_seri_cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
+                    
+                    # Sütun 3: Birim/Ünite/Servis Adı
+                    current_sheet.cell(row=excel_row, column=3, value=birim)
+                    
+                    # Sütun 4: Hasta Ad Soyad
+                    current_sheet.cell(row=excel_row, column=4, value=hasta)
+                    
+                    # Sütun 5: Glukometre Sonucu
+                    current_sheet.cell(row=excel_row, column=5, value=gluko_sonuc)
+                    
+                    # Sütun 6: Otoanalizör Sonucu
+                    current_sheet.cell(row=excel_row, column=6, value=oto_sonuc)
+                    
+                    # Sütun 7: % Sapma Oranı
+                    current_sheet.cell(row=excel_row, column=7, value=sapma_oran_str)
+
+                    # Sütun 8: Değerlendirme Sonucu (Düzeltilmiş Mantık)
+                    excel_formatted_degerlendirme = "" # Başlangıç değeri
+                    try:
+                        # sapma_oran_str (örn: "12.50%") içinden sayısal değeri al
+                        sapma_val = float(sapma_oran_str.replace('%','').strip())
+                        
+                        if sapma_val > 9.99:
+                            excel_formatted_degerlendirme = "□ UYGUN\n✓ UYGUN DEĞİL"
+                        else:
+                            excel_formatted_degerlendirme = "✓ UYGUN\n□ UYGUN DEĞİL"
+                    except ValueError:
+                        # Eğer sapma oranı string'i hatalıysa ve float'a çevrilemiyorsa,
+                        # ağaçtaki orijinal (tek satırlık) değeri kullan.
+                        excel_formatted_degerlendirme = record[degerlendirme_idx] 
+                        # print(f"Uyarı: Geçersiz sapma oranı formatı ('{sapma_oran_str}') Excel'e aktarılırken. Satır: {excel_row}. Orijinal değerlendirme kullanılıyor.")
+                    
+                    cell_col8 = current_sheet.cell(row=excel_row, column=8, value=excel_formatted_degerlendirme)
+                    cell_col8.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
+                    
+                    excel_row += 1
+
+            wb.save(output_file_path)
+
+            try:
+                if os.name == 'nt': os.startfile(output_file_path)
+                elif sys.platform == 'darwin': subprocess.run(['open', output_file_path], check=True)
+                else: subprocess.run(['xdg-open', output_file_path], check=True)
+            except Exception as e_open:
+                print(f"Excel dosyası ({output_file_path}) otomatik olarak açılamadı: {e_open}")
+
+        except ImportError:
+            messagebox.showerror("Kütüphane Hatası", "Excel'e aktarma için 'openpyxl' ve 'shutil' kütüphaneleri gereklidir.\nLütfen 'pip install openpyxl' komutu ile yükleyin.", parent=self.master)
+        except Exception as e:
+            messagebox.showerror("Excel'e Aktarma Hatası", f"Cihaz Karşılaştırma Formu oluşturulurken bir hata oluştu: {e}", parent=self.master)
 
     def hbtc_formu_olustur(self):
         if not PYTHON_DOCX_AVAILABLE:
@@ -1986,20 +2282,19 @@ class MainWindow:
                         messagebox.showerror("Hata", "Başlangıç tarihi bitiş tarihinden sonra olamaz!", parent=dialog)
                         return
                     dialog.destroy()
-                    self.generate_hbtc_form(start_date, end_date)
+                    self.export_to_hbtc(start_date, end_date)
                 except ValueError:
                     messagebox.showerror("Hata", "Geçersiz tarih formatı. GG.AA.YYYY kullanın.", parent=dialog)
 
             ttk.Button(dialog, text="Oluştur", command=on_ok).pack(pady=10)
-
-            # Diyalog kutusuna odaklan
-            dialog.focus_set()
+           
+            dialog.focus_set() # Diyalog kutusuna odaklan
             dialog.grab_set()
             dialog.wait_window()
 
         create_date_selection_dialog()
 
-    def generate_hbtc_form(self, start_date, end_date):
+    def export_to_hbtc(self, start_date, end_date):
         if not self.tree_kalite.get_children():
             messagebox.showinfo("Veri Yok", "Kalite Kontrol tablosu boş. HBTC formu oluşturulacak veri bulunmuyor.", parent=self.master)
             return
@@ -2012,7 +2307,6 @@ class MainWindow:
                                  parent=self.master)
             return
 
-        self.start_islem_label()
         self.master.update_idletasks()
 
         try:
@@ -2028,7 +2322,7 @@ class MainWindow:
 
             col_map = {
                 "Tarih": 1, "Cihaz Tipi - Marka": 2, "Cihaz Seri No": 3,
-                "L1": 4, "L2": 5, "L3": 6, "Glukometrenin Geldiği Birim": 7
+                "L1": 4, "L2": 5, "L3": 6, "Birim/Ünite/Servis Adı": 7
             }
             s_tarih_idx, s_cihaz_adi_idx, s_seri_no_idx = 0, 1, 2
             s_sonuc_idx, s_min_max_idx, s_bolum_idx = 3, 4, 5
@@ -2066,12 +2360,12 @@ class MainWindow:
                         sonuc_lines = [f"L1 {l1} mg/dl", f"L2 {l2} mg/dl", f"L3 {l3} mg/dl"]
                         set_cell_text(row_cells[s_sonuc_idx], sonuc_lines, is_multiline=True)
                         set_cell_text(row_cells[s_min_max_idx], min_max_degerleri, is_multiline=True)
-                        set_cell_text(row_cells[s_bolum_idx], str(values[col_map["Glukometrenin Geldiği Birim"]]))
+                        set_cell_text(row_cells[s_bolum_idx], str(values[col_map["Birim/Ünite/Servis Adı"]]))
                 except ValueError:
                     print(f"Hatalı tarih formatı: {tarih_str}. Bu kayıt atlandı.")
                     continue
 
-            timestamp = datetime.now().strftime('%Y.%m.%d_%H.%M')
+            timestamp = datetime.now().strftime('%Y.%m.%d_%H-%M')
             output_filename = f"HBTC_Kalite_Kontrol_Formu_{timestamp}.docx"
             output_path = os.path.join(HBTC_FORM_OUTPUT_DIR, output_filename)
             document.save(output_path)
@@ -2085,10 +2379,8 @@ class MainWindow:
 
         except Exception as e:
             messagebox.showerror("Form Oluşturma Hatası", f"HBTC formu oluşturulurken bir hata oluştu: {e}", parent=self.master)
-        finally:
-            self.stop_islem_label()
 
-    def excel_e_aktar_sablon(self, tree, tablo_adi_kisaltmasi, sablon_dosya_adi):
+    def sablondan_excel_e_aktar(self, tree, tablo_adi_kisaltmasi, sablon_dosya_adi):
         if not tree.get_children():
             messagebox.showinfo("Veri Yok", f"{tablo_adi_kisaltmasi} tablosunda aktarılacak veri bulunmuyor.", parent=self.master)
             return
@@ -2101,7 +2393,6 @@ class MainWindow:
                                  parent=self.master)
             return
         
-        self.start_islem_label()
         self.master.update_idletasks()
 
         try:
@@ -2122,7 +2413,7 @@ class MainWindow:
                         current_cell = ws.cell(row=start_row_excel, column=target_col_excel, value=cell_value)
                         current_cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                        if tablo_adi_kisaltmasi == "YuzdeSapma" and header_title_tree == "Sapma %":
+                        if tablo_adi_kisaltmasi == "YuzdeSapma" and header_title_tree == "% Sapma Oranı":
                             try:
                                 str_value = str(cell_value).replace('%', '').strip()
                                 if str_value:
@@ -2162,12 +2453,8 @@ class MainWindow:
              messagebox.showerror("Kütüphane Hatası", "Excel'e aktarma için 'openpyxl' kütüphanesi gereklidir.\nLütfen 'pip install openpyxl' komutu ile yükleyin.", parent=self.master)
         except Exception as e:
             messagebox.showerror("Excel'e Aktarma Hatası", f"Veriler Excel'e aktarılırken bir hata oluştu: {e}", parent=self.master)
-        finally:
-            self.stop_islem_label()
 
-
-
-    def genel_alan_kontrol(self):
+    def genel_veri_giris_kontrol(self):
         birim = self.cmb_birim.get()
         tip = self.cmb_device_type.get()
         seri = self.cmb_device_serial.get()
@@ -2226,7 +2513,7 @@ class MainWindow:
         if l_values is None:
             return
 
-        if not self.genel_alan_kontrol():
+        if not self.genel_veri_giris_kontrol():
             return
         l1, l2, l3 = l_values
 
@@ -2255,7 +2542,7 @@ class MainWindow:
         self.statusbar_guncelle()
 
     def yuzde_sapma_hesapla_ve_aktar(self):
-        if not self.genel_alan_kontrol():
+        if not self.genel_veri_giris_kontrol():
             return
         try:
             glukometre_str = self.txt_glukometre_yuzde.get().strip()
@@ -2268,6 +2555,10 @@ class MainWindow:
             if glukometre == 0 and lab == 0:
                 messagebox.showerror("Hata", "Glukometre ve Laboratuvar ölçümleri aynı anda sıfır olamaz!")
                 return
+            hasta_ad_soyad = self.txt_hasta_ad_soyad.get().strip()
+            if not hasta_ad_soyad:
+                messagebox.showerror("Hata", "Hasta Ad Soyad alanı boş olamaz!")
+                return
             if glukometre == lab:
                 yuzde_sapma = 0.0
             elif min(glukometre, lab) == 0:
@@ -2278,20 +2569,18 @@ class MainWindow:
             tarih_str = datetime.now().strftime("%d.%m.%Y")
             birim = self.cmb_birim.get()
             cihaz_tipi_marka = self.cmb_device_type.get()
+            marka = cihaz_tipi_marka.split('-')[-1].strip() if '-' in cihaz_tipi_marka else cihaz_tipi_marka
             cihaz_seri_no = self.cmb_device_serial.get()
             son_4_hane = self.cmb_son4hane.get().strip().upper()
             cihaz_seri_no_tam = cihaz_seri_no + son_4_hane  # Seri no ve son 4 haneyi birleştir
+            degerlendirme = "□ UYGUN ✓ UYGUN DEĞİL" if yuzde_sapma > 9.99 else "✓ UYGUN □ UYGUN DEĞİL"
 
             if not self.add_or_update_device_assignment(birim, cihaz_tipi_marka, cihaz_seri_no, son_4_hane):
                 return
-
             sonraki_tarih_yuzde_str = self.ayarla_sonraki_tarih(tarih_str, 30)
             tags_to_apply = ('high_deviation_tree',) if yuzde_sapma > 9.99 else ()
 
-            new_item = self.tree_yuzde.insert("", "end", values=(
-                self.measurement_no_yuzde, tarih_str, cihaz_tipi_marka, cihaz_seri_no_tam,  # Birleştirilmiş seri numarasını kullan
-                glukometre, lab, f"{yuzde_sapma:.2f}%", birim, sonraki_tarih_yuzde_str
-            ), tags=tags_to_apply)
+            new_item = self.tree_yuzde.insert("", "end", values=(self.measurement_no_yuzde, tarih_str, marka, cihaz_seri_no_tam, birim, hasta_ad_soyad, glukometre, lab, f"{yuzde_sapma:.2f}%", degerlendirme, sonraki_tarih_yuzde_str), tags=tags_to_apply)
             self.measurement_no_yuzde += 1
             self.txt_glukometre_yuzde.delete(0, tk.END)
             self.txt_lab_yuzde.delete(0, tk.END)
@@ -2366,63 +2655,107 @@ class MainWindow:
         self.editing_entry.select_range(0, tk.END)
 
         def save_edit(event_save=None):
-            if not self.editing_entry: return
+            if not self.editing_entry:
+                return
             new_val = self.editing_entry.get().strip()
-            values = list(item['values'])
+            current_values_copy = list(item['values'])
+            original_tags = tree.item(rowid, 'tags')
 
+            # --- Sütuna özel ilk doğrulamalar ---
+            if tree == self.tree_kalite:
+                if column_name == "L1":
+                    try: val = int(new_val); assert 36 <= val <= 108
+                    except (ValueError, AssertionError):
+                        messagebox.showerror("Hata", "L1 değeri 36-108 arasında olmalı!", parent=tree)
+                        return
+                elif column_name == "L2":
+                    try: val = int(new_val); assert 144 <= val <= 216
+                    except (ValueError, AssertionError):
+                        messagebox.showerror("Hata", "L2 değeri 144-216 arasında olmalı!", parent=tree)
+                        return
+                elif column_name == "L3":
+                    try: val = int(new_val); assert 252 <= val <= 396
+                    except (ValueError, AssertionError):
+                        messagebox.showerror("Hata", "L3 değeri 252-396 arasında olmalı!", parent=tree)
+                        return
+            
             if column_name in ["Tarih", "Bir Sonraki Gelinecek Tarih"]:
                 try:
                     datetime.strptime(new_val, "%d.%m.%Y")
                 except ValueError:
-                    messagebox.showerror("Hata", f"Geçersiz tarih formatı: {new_val}. GG.AA.YYYY kullanın.")
-                    if self.editing_entry: self.editing_entry.destroy()
-                    self.editing_entry = None
+                    messagebox.showerror("Hata", f"Geçersiz tarih formatı: {new_val}. GG.AA.YYYY kullanın.", parent=tree)
                     return
 
-            if tree == self.tree_kalite:
-                if column_name == "L1":
-                    try: val = int(new_val); assert 36 <= val <= 108
-                    except (ValueError, AssertionError): messagebox.showerror("Hata", "L1: 36-108!"); return
-                elif column_name == "L2":
-                    try: val = int(new_val); assert 144 <= val <= 216
-                    except (ValueError, AssertionError): messagebox.showerror("Hata", "L2: 144-216!"); return
-                elif column_name == "L3":
-                    try: val = int(new_val); assert 252 <= val <= 396
-                    except (ValueError, AssertionError): messagebox.showerror("Hata", "L3: 252-396!"); return
+            # Düzenlenen hücrenin değerini kopyalanan listede güncelle
+            current_values_copy[col_index] = new_val
+            new_tags = original_tags
 
+            # --- Yeniden hesaplamalar ve bağımlı güncellemeler ---
             if tree == self.tree_yuzde:
-                if column_name in ["Glukometre Ölçümü", "Lab. Ölçümü"]:
-                    try: int(new_val)
-                    except ValueError: messagebox.showerror("Hata", f"{column_name} tamsayı olmalıdır."); return
-                elif column_name == "Yüzde Sapma":
+                if column_name in ["Glukometre Sonucu", "Oto analizör Sonucu"]:
                     try:
-                        assert new_val.endswith('%'); float(new_val.replace('%',''))
-                    except (AssertionError, ValueError): messagebox.showerror("Hata", "Yüzde Sapma formatı hatalı (örn: 10.50%)."); return
-
-                values[col_index] = new_val
-                if column_name in ["Glukometre Ölçümü", "Lab. Ölçümü"]:
+                        # Düzenlenen değerin bir sayı olduğundan emin ol
+                        int(float(new_val)) 
+                    except ValueError:
+                        messagebox.showerror("Hata", f"{column_name} tamsayı olmalıdır.", parent=tree)
+                        return 
+                elif column_name == "% Sapma Oranı": # Kullanıcı % Sapma'yı doğrudan düzenlerse doğrulama
                     try:
-                        gluk_idx = columns.index("Glukometre Ölçümü")
-                        lab_idx = columns.index("Lab. Ölçümü")
-                        sapma_idx = columns.index("Yüzde Sapma")
-                        glukometre = int(values[gluk_idx])
-                        lab = int(values[lab_idx])
-                        if glukometre == lab: yuzde_sapma = 0.0
-                        elif min(glukometre, lab) == 0: yuzde_sapma = 100.0 if max(glukometre, lab) != 0 else 0.0
-                        else: yuzde_sapma = abs((glukometre - lab) / min(glukometre, lab)) * 100
-                        values[sapma_idx] = f"{yuzde_sapma:.2f}%"
-                        tags = ('high_deviation_tree',) if yuzde_sapma > 9.99 else ()
-                        tree.item(rowid, tags=tags)
-                    except ValueError: messagebox.showerror("Hata", "Yüzde sapma hesaplanamadı!"); return
+                        if not new_val.endswith('%'): raise ValueError("Yüzde işareti eksik.")
+                        float(new_val.replace('%','')) # Sayısal kısmın geçerli olup olmadığını kontrol et
+                    except ValueError as e:
+                        messagebox.showerror("Hata", f"Yüzde Sapma formatı hatalı (örn: 10.50%): {e}", parent=tree)
+                        return
 
-            values[col_index] = new_val
+                # Glukometre veya Lab sonuçları değiştiyse yeniden hesaplama
+                if column_name in ["Glukometre Sonucu", "Oto analizör Sonucu"]:
+                    try:
+                        gluk_idx = columns.index("Glukometre Sonucu")
+                        lab_idx = columns.index("Oto analizör Sonucu")
+                        sapma_idx = columns.index("% Sapma Oranı")
+                        degerlendirme_idx = columns.index("Değerlendirme Sonucu") # EKLENDİ
+
+                        # current_values_copy listesi zaten yeni değeri içeriyor
+                        glukometre_str_val = current_values_copy[gluk_idx]
+                        lab_str_val = current_values_copy[lab_idx]
+                        
+                        # Değerlerin ayrıştırılabilir tamsayılar olduğundan emin ol
+                        glukometre = int(float(glukometre_str_val))
+                        lab = int(float(lab_str_val))
+
+                        if glukometre == lab:
+                            yuzde_sapma = 0.0
+                        elif min(glukometre, lab) == 0: # Sıfıra bölme hatasını önle
+                            yuzde_sapma = 100.0 if max(glukometre, lab) != 0 else 0.0
+                        else:
+                            yuzde_sapma = abs((glukometre - lab) / min(glukometre, lab)) * 100
+                        
+                        current_values_copy[sapma_idx] = f"{yuzde_sapma:.2f}%"
+                        degerlendirme = "□ UYGUN ✓ UYGUN DEĞİL" if yuzde_sapma > 9.99 else "✓ UYGUN □ UYGUN DEĞİL"
+                        current_values_copy[degerlendirme_idx] = degerlendirme
+                        
+                        new_tags = ('high_deviation_tree',) if yuzde_sapma > 9.99 else ()
+                    
+                    except ValueError:
+                        # Bu hata, gluk_idx/lab_idx değerlerinin dönüştürülemediği anlamına gelir.
+                        # Bu durum, yukarıdaki sütunlara özel doğrulama tarafından yakalanmalıydı.
+                        messagebox.showerror("Hata", "Yüzde sapma hesaplanamadı! Glukometre/Lab değerlerini kontrol edin.", parent=tree)
+                        return # Önemli: Dönüşüm başarısız olursa işlemeyi durdur
+            
+            # "Tarih" değiştirildiyse "Bir Sonraki Gelinecek Tarih"i güncelle
             if column_name == "Tarih":
-                sonraki_tarih_idx = columns.index("Bir Sonraki Gelinecek Tarih")
-                gun_ekle = 15 if tree == self.tree_kalite else 30
-                values[sonraki_tarih_idx] = self.ayarla_sonraki_tarih(new_val, gun_ekle)
+                try:
+                    sonraki_tarih_idx = columns.index("Bir Sonraki Gelinecek Tarih")
+                    gun_ekle = 15 if tree == self.tree_kalite else 30 # Tabloya göre gün ekle
+                    current_values_copy[sonraki_tarih_idx] = self.ayarla_sonraki_tarih(new_val, gun_ekle)
+                except ValueError: # Sütun bulunamazsa (örn. farklı bir tabloda)
+                    pass
 
-            tree.item(rowid, values=tuple(values))
-            if self.editing_entry: self.editing_entry.destroy()
+            # Satırı tüm değişikliklerle son olarak güncelle
+            tree.item(rowid, values=tuple(current_values_copy), tags=new_tags) 
+            
+            if self.editing_entry:
+                self.editing_entry.destroy()
             self.editing_entry = None
 
         self.editing_entry.bind("<Return>", save_edit)
@@ -2469,7 +2802,8 @@ class MainWindow:
             self.measurement_no_yuzde = len(all_items) + 1
 
     def tablolari_temizle(self):
-        if messagebox.askokcancel("Onay", "Tüm tablolardaki verileri silmek istediğinize emin misiniz? Bu işlem yedeklenmiş verileri etkilemez, sadece mevcut görünümü temizler."):
+        if messagebox.askokcancel("Onay", "Tüm tablolardaki verileri silmek istediğinize emin misiniz? " \
+        "Bu işlem yedeklenmiş verileri etkilemez, sadece mevcut görünümü temizler."):
             for item in self.tree_kalite.get_children():
                 self.tree_kalite.delete(item)
             for item in self.tree_yuzde.get_children():
@@ -2535,57 +2869,95 @@ class MainWindow:
             return None
 
     def _topla_olcum_verileri(self, durum_tipi):
-        bulunan_olcumler = []
-        bugun = date.today()
-        sira_no = 1
+            bulunan_olcumler = []
+            bugun = date.today()
+            
+            # Adım 1: Her bir benzersiz cihaz için en son ölçüm kaydının detaylarını bul.
+            # Anahtar: (birim_adi, cihaz_seri_no)
+            # Değer: (en_son_olcum_tarihi_dt, gelmesi_gereken_tarih_str, olcum_tipi_str, birim_adi, cihaz_seri_no)
+            latest_measurement_details = {}
 
-        for item_id in self.tree_kalite.get_children():
-            values = self.tree_kalite.item(item_id, 'values')
-            if len(values) > 8:
-                birim_adi = values[7]
-                cihaz_seri_no = values[3]
-                gelmesi_gereken_tarih_str = values[8]
+            def find_latest_measurements(tree, olcum_tipi_str, birim_idx, seri_idx, olcum_tarih_idx_tree, gelmesi_gereken_tarih_idx_tree):
+                for item_id in tree.get_children():
+                    values = tree.item(item_id, 'values')
+                    try:
+                        if len(values) <= max(birim_idx, seri_idx, olcum_tarih_idx_tree, gelmesi_gereken_tarih_idx_tree):
+                            # print(f"Uyarı: '{olcum_tipi_str}' tablosunda eksik sütunlu veri: {values}")
+                            continue
+
+                        birim_adi = values[birim_idx]
+                        cihaz_seri_no = values[seri_idx] # Bu zaten tam seri no (ana + son4hane) olmalı
+                        olcum_tarihi_str = values[olcum_tarih_idx_tree]
+                        gelmesi_gereken_tarih_str_val = values[gelmesi_gereken_tarih_idx_tree]
+
+                        olcum_tarihi_dt = datetime.strptime(olcum_tarihi_str, "%d.%m.%Y").date()
+                        cihaz_anahtar = (birim_adi, cihaz_seri_no)
+
+                        if cihaz_anahtar not in latest_measurement_details or \
+                        olcum_tarihi_dt > latest_measurement_details[cihaz_anahtar][0]:
+                            latest_measurement_details[cihaz_anahtar] = (
+                                olcum_tarihi_dt,
+                                gelmesi_gereken_tarih_str_val,
+                                olcum_tipi_str,
+                                birim_adi, 
+                                cihaz_seri_no
+                            )
+                    except (ValueError, IndexError) as e:
+                        print(f"Hata (_topla_olcum_verileri - Adım 1 - {olcum_tipi_str}): {e} - Veri: {values}")
+                        continue
+            
+            # Kalite Kontrol Ağacı Sütun İndeksleri:
+            # "No"(0), "Tarih"(1), ..., "Cihaz Seri No"(3), ..., "Birim/Ünite/Servis Adı"(7), "Bir Sonraki Gelinecek Tarih"(8)
+            find_latest_measurements(self.tree_kalite, "Kalite Kontrol", 
+                                    birim_idx=7, seri_idx=3, olcum_tarih_idx_tree=1, gelmesi_gereken_tarih_idx_tree=8)
+
+            # Yüzde Sapma Ağacı Sütun İndeksleri:
+            # "No"(0), "Tarih"(1), ..., "Cihaz Seri No"(3), "Birim/Ünite/Servis Adı"(4), ..., "Bir Sonraki Gelinecek Tarih"(10)
+            find_latest_measurements(self.tree_yuzde, "Yüzde Sapma",
+                                    birim_idx=4, seri_idx=3, olcum_tarih_idx_tree=1, gelmesi_gereken_tarih_idx_tree=10)
+
+            # Adım 2: Bulunan en son ölçümlere göre durumu değerlendir.
+            sira_no_counter = 1
+            temp_olcumler = []
+
+            for cihaz_anahtar, data in latest_measurement_details.items():
+                # data = (en_son_olcum_tarihi_dt, gelmesi_gereken_tarih_str, olcum_tipi_str, birim_adi, cihaz_seri_no)
+                gelmesi_gereken_tarih_str_cihazin = data[1]
+                olcum_tipi_cihazin = data[2]
+                birim_adi_cihazin = data[3]
+                cihaz_seri_no_cihazin = data[4]
 
                 try:
-                    gelmesi_gereken_tarih = datetime.strptime(gelmesi_gereken_tarih_str, "%d.%m.%Y").date()
-                    fark_gun = (gelmesi_gereken_tarih - bugun).days
+                    gelmesi_gereken_tarih_dt = datetime.strptime(gelmesi_gereken_tarih_str_cihazin, "%d.%m.%Y").date()
+                    fark_gun = (gelmesi_gereken_tarih_dt - bugun).days
 
                     if durum_tipi == "gecen" and fark_gun < 0:
                         gecen_gun_str = f"{-fark_gun} gün geçti"
-                        bulunan_olcumler.append((sira_no, "Kalite Kontrol", birim_adi, cihaz_seri_no, gelmesi_gereken_tarih_str, gecen_gun_str))
-                        sira_no +=1
-                    elif durum_tipi == "yaklasan" and 0 <= fark_gun <= 2:
+                        kayit = (0, olcum_tipi_cihazin, birim_adi_cihazin, cihaz_seri_no_cihazin,
+                                gelmesi_gereken_tarih_str_cihazin, gecen_gun_str, gelmesi_gereken_tarih_dt) # Sıralama için dt ekle
+                        temp_olcumler.append(kayit)
+                    
+                    elif durum_tipi == "yaklasan" and 0 <= fark_gun <= 2: # Yaklaşanlar için 0-2 gün aralığı
                         kalan_gun_str = f"{fark_gun} gün kaldı"
-                        if fark_gun == 0: kalan_gun_str = "Bugün"
-                        bulunan_olcumler.append((sira_no, "Kalite Kontrol", birim_adi, cihaz_seri_no, gelmesi_gereken_tarih_str, kalan_gun_str))
-                        sira_no += 1
-                except ValueError:
-                    print(f"Kalite tablosunda hatalı tarih formatı: {gelmesi_gereken_tarih_str} - Cihaz: {cihaz_seri_no}")
+                        if fark_gun == 0: 
+                            kalan_gun_str = "Bugün"
+                        kayit = (0, olcum_tipi_cihazin, birim_adi_cihazin, cihaz_seri_no_cihazin,
+                                gelmesi_gereken_tarih_str_cihazin, kalan_gun_str, gelmesi_gereken_tarih_dt) # Sıralama için dt ekle
+                        temp_olcumler.append(kayit)
+                
+                except ValueError as e:
+                    print(f"Hata (_topla_olcum_verileri - Adım 2 - {durum_tipi}): {e} - Tarih Str: {gelmesi_gereken_tarih_str_cihazin}")
                     continue
+            
+            # Geçerlilik tarihine göre sırala (en eski geçerlilik tarihi en üstte)
+            temp_olcumler.sort(key=lambda x: x[6]) 
 
-        for item_id in self.tree_yuzde.get_children():
-            values = self.tree_yuzde.item(item_id, 'values')
-            if len(values) > 8:
-                birim_adi = values[7]
-                cihaz_seri_no = values[3]
-                gelmesi_gereken_tarih_str = values[8]
-                try:
-                    gelmesi_gereken_tarih = datetime.strptime(gelmesi_gereken_tarih_str, "%d.%m.%Y").date()
-                    fark_gun = (gelmesi_gereken_tarih - bugun).days
-
-                    if durum_tipi == "gecen" and fark_gun < 0:
-                        gecen_gun_str = f"{-fark_gun} gün geçti"
-                        bulunan_olcumler.append((sira_no, "Yüzde Sapma", birim_adi, cihaz_seri_no, gelmesi_gereken_tarih_str, gecen_gun_str))
-                        sira_no += 1
-                    elif durum_tipi == "yaklasan" and 0 <= fark_gun <= 2:
-                        kalan_gun_str = f"{fark_gun} gün kaldı"
-                        if fark_gun == 0: kalan_gun_str = "Bugün"
-                        bulunan_olcumler.append((sira_no, "Yüzde Sapma", birim_adi, cihaz_seri_no, gelmesi_gereken_tarih_str, kalan_gun_str))
-                        sira_no += 1
-                except ValueError:
-                    print(f"Yüzde Sapma tablosunda hatalı tarih formatı: {gelmesi_gereken_tarih_str} - Cihaz: {cihaz_seri_no}")
-                    continue
-        return bulunan_olcumler
+            # Sıra numaralarını ata ve son listeyi oluştur
+            for kayit_data in temp_olcumler:
+                bulunan_olcumler.append((sira_no_counter,) + kayit_data[1:6]) # dt object'i (kayit_data[6]) son listeye ekleme
+                sira_no_counter += 1
+                
+            return bulunan_olcumler
 
     def _goster_durum_penceresi(self, baslik, olcum_listesi):
         if not olcum_listesi:
@@ -2634,7 +3006,6 @@ class MainWindow:
         self._goster_durum_penceresi("Günü Yaklaşan Ölçümler (Son 2 Gün)", yaklasan_olcumler)
 
     def save_data_to_timestamped_csv(self):
-        self.start_islem_label()
         self.master.update_idletasks()
         try:
             timestamp = datetime.now().strftime("%Y.%m.%d_%H.%M")
@@ -2663,11 +3034,58 @@ class MainWindow:
                  print("Kaydedilecek veri bulunmadığı için yedekleme yapılmadı.")
         except Exception as e:
             messagebox.showerror(".CSV Kaydetme Hatası", f"Veriler .CSV dosyasına kaydedilirken bir hata oluştu:\n{e}", parent=self.master)
-        finally:
-            self.stop_islem_label()
 
 
+    def is_iptv_db_empty(self):
+        """iptv_kanallar tablosunun boş olup olmadığını kontrol eder."""
+        try:
+            conn = sqlite3.connect(VERITABANI_DOSYASI)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM iptv_kanallar")
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count == 0
+        except sqlite3.Error as e:
+            print(f"IPTV veritabanı kontrol hatası: {e}")
+            return True  # Hata durumunda varsayılan olarak boş kabul et
 
+    def iptv_playlist_yukle_diyalog(self):
+        # Eğer IPTV sekmesi zaten varsa o sekmeye geç
+        for i in range(self.notebook.index("end")):
+            if self.notebook.tab(i, "text") == "IPTV":
+                self.notebook.select(i)
+                return
+
+        # Yoksa sekmeyi oluştur
+        from Modüller import iptv_modul
+        iptv_modul.create_iptv_tab(self, self.notebook, self.iptv_channels)
+        # Sekmeyi seç
+        for i in range(self.notebook.index("end")):
+            if self.notebook.tab(i, "text") == "IPTV":
+                self.notebook.select(i)
+                return
+
+    def load_iptv_playlist(self, url):
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            lines = response.text.splitlines()
+            channels = []
+            name, stream_url = None, None
+
+            for line in lines:
+                if line.startswith("#EXTINF"):
+                    name = line.split(",")[-1].strip()
+                elif line and not line.startswith("#"):
+                    stream_url = line.strip()
+                    if name and stream_url:
+                        channels.append((name, stream_url))
+                        name, stream_url = None, None
+
+        except Exception as e:
+            messagebox.showerror("Hata", f"Playlist yüklenemedi:\n{e}", parent=self.master)
+
+############## ANA MENÜ #######################
     def create_menu(self):
         menubar = tk.Menu(self.master)
         menu_dosya = tk.Menu(menubar, tearoff=0)
@@ -2689,11 +3107,12 @@ class MainWindow:
 
         menu_kalite_kontrol = tk.Menu(menubar, tearoff=0)
         menu_kalite_kontrol.add_command(label="HBTC Formu Oluştur", command=self.hbtc_formu_olustur)
-        menu_kalite_kontrol.add_command(label="Verileri Excel'e Aktar", command=lambda: self.excel_e_aktar_sablon(self.tree_kalite, "KaliteKontrol", KALITE_KONTROL_EXCEL_SABLON_DOSYASI))
+        menu_kalite_kontrol.add_command(label="Verileri Excel'e Aktar", command=lambda: self.sablondan_excel_e_aktar(self.tree_kalite, "KaliteKontrol", KALITE_KONTROL_EXCEL_SABLON_DOSYASI))
         menubar.add_cascade(label="Kalite Kontrol Menüsü", menu=menu_kalite_kontrol)
 
         menu_yuzde_sapma = tk.Menu(menubar, tearoff=0)
-        menu_yuzde_sapma.add_command(label="Verileri Excel'e Aktar", command=lambda: self.excel_e_aktar_sablon(self.tree_yuzde, "YuzdeSapma", YUZDE_SAPMA_EXCEL_SABLON_DOSYASI))
+        menu_yuzde_sapma.add_command(label="Cihaz Karşılaştırma Sonuç Formu Oluştur", command=self.cihaz_karsilastirma_formu_olustur)
+        menu_yuzde_sapma.add_command(label="Verileri Excel'e Aktar", command=lambda: self.sablondan_excel_e_aktar(self.tree_yuzde, "YuzdeSapma", YUZDE_SAPMA_EXCEL_SABLON_DOSYASI))
         menubar.add_cascade(label="Yüzde Sapma Menüsü", menu=menu_yuzde_sapma)
 
         menu_durum_tespiti = tk.Menu(menubar, tearoff=0)
@@ -2708,27 +3127,24 @@ class MainWindow:
         menu_ekstralar.add_command(label="Notepad", command=self.launch_notepad, accelerator="Ctrl+N")        
         menu_ekstralar.add_command(label="Takvim - Ajanda", command=self.launch_calendar, accelerator="Ctrl+T")
         menu_ekstralar.add_command(label="Harita", command=self.open_map, accelerator="Ctrl+M")
-        menu_ekstralar.add_command(label="VKİ Hesaplama", command=self.launch_bmi_calculator, accelerator="Ctrl+V")
+        menu_ekstralar.add_command(label="Sağlık Hesaplamaları", command=self.launch_bmi_calculator)
         menu_ekstralar.add_command(label="Excel / CSV Görüntüleyici", command=self.launch_excel_csv_viewer)
         menu_ekstralar.add_command(label="Flappy Bird Oyunu", command=self.launch_flappy_bird)
-        menu_ekstralar.add_command(label="Yılan Oyunu", command=self.snake_oynu)
+        menu_ekstralar.add_command(label="Yılan Oyunu", command=self.snake_oyunu)
         menu_ekstralar.add_command(label="Sayı Tahmin Oyunu", command=self.start_cows_bulls_game)
         menu_ekstralar.add_command(label="2048 Oyunu", command=self.launch_game_2048)
         menu_ekstralar.add_command(label="Memory Puzzle Oyunu", command=self.launch_memory_puzzle)
-        menu_ekstralar.add_command(label="Space Invaders Oyunu", command=self.launch_game_space_invaders)
         menubar.add_cascade(label="Ekstra Özellikler", menu=menu_ekstralar)
-
         self.master.config(menu=menubar)
         self.master.bind('<Control-h>', lambda event: self.open_calculator())
         self.master.bind('<Control-t>', lambda event: self.launch_calendar())
-        self.master.bind('<Control-v>', lambda event: self.open_bmi_calculation_dialog())
         self.master.bind('<Control-f>', lambda event: self.open_cihaz_arama_dialog())
         self.master.bind('<Control-g>', lambda event: self.goster_gunu_gecen_olcumler())
         self.master.bind('<Control-m>', lambda event: self.open_map())
         self.master.bind('<Control-n>', lambda event: self.launch_notepad())
         self.master.bind('<Control-F8>', lambda event: self.take_screenshot())
         self.master.bind('<Control-y>', lambda event: self.goster_gunu_yaklasan_olcumler())
-
+###################################
 ####################################KODUN AYRILABİLİR KISMI####################################
 #    def launch_paint(self):
 #        try:
@@ -2750,7 +3166,7 @@ class MainWindow:
     def launch_flappy_bird(self):
         subprocess.Popen([sys.executable, "Modüller\\Flappy Bird\\main.py"])
 
-    def snake_oynu(self):
+    def snake_oyunu(self):
         snake_game.run_snake_game()
 
     def launch_memory_puzzle(self):
@@ -2758,9 +3174,6 @@ class MainWindow:
 
     def launch_hakkinda(self):
         show_about(self.master)
-
-    def launch_game_space_invaders(self):
-        subprocess.Popen([sys.executable, "Modüller\\Space Invaders\\main.py"])
 
     def launch_notepad(self):
         try:
@@ -2776,15 +3189,15 @@ class MainWindow:
 
     def launch_calendar(self, event=None):
         try:
-            ajanda.show_agenda_ui(self.master, VERITABANI_DOSYASI_ADI)
+            ajanda.show_agenda_ui(self.master, VERITABANI_DOSYASI)
         except Exception as e:
             print(f"Ajanda açılamadı: {e}")
             messagebox.showerror("Ajanda Hatası", f"Ajanda arayüzü açılamadı:\n{e}", parent=self.master)
 
     def initialize_agenda_module(self):
         try:
-            ajanda.init_agenda_db(VERITABANI_DOSYASI_ADI)
-            ajanda.show_startup_alerts(self.master, VERITABANI_DOSYASI_ADI) # Başlangıçta Hatırlatma göster (Eğer mevcutsa)
+            ajanda.init_agenda_db(VERITABANI_DOSYASI)
+            ajanda.show_startup_alerts(self.master, VERITABANI_DOSYASI) # Başlangıçta Hatırlatma penceresi göster (Eğer kayıt mevcutsa)
         except Exception as e:
             print(f"Ajanda modülü başlatılırken hata: {e}")
             messagebox.showerror("Ajanda Hatası", f"Ajanda modülü başlatılamadı:\n{e}", parent=self.master)
@@ -2794,7 +3207,7 @@ class MainWindow:
             import time
             from PIL import ImageGrab
             from datetime import datetime
-            time.sleep(1)  # 1 saniye bekle
+            time.sleep(1)  # 1 saniye bekledikten sonra
             now = datetime.now().strftime("%Y.%m.%d_%H-%M-%S")
             filename = f"screenshot_{now}.png"
             ImageGrab.grab().save(filename)
@@ -2818,7 +3231,6 @@ class MainWindow:
 
     def open_map(self):
         self.map_viewer.open_map()
-
 ############################################################################################
     def kaydet_ve_cikis_yap(self):
         if hasattr(self, '_is_closing') and self._is_closing:
@@ -2826,7 +3238,7 @@ class MainWindow:
         self._is_closing = True
 
         try:
-            # Pencere durumunu kaydet
+            # Pencere durumunu ayarlara kaydet
             if self.master.winfo_exists():
                 is_maximized = "1" if self.master.state() == 'zoomed' else "0"
                 self.program_ayari_kaydet("window_maximized", is_maximized)
@@ -2836,7 +3248,7 @@ class MainWindow:
                 else:
                     self.program_ayari_kaydet("window_geometry", "")
 
-            # Radyo istasyonu ve ses seviyesini kaydet
+            # Radyo istasyonu ve ses seviyesini ayarlara kaydet
             last_station_name = self.cmb_radyo.get()
             if self.radio_process and self.radio_process.poll() is None:
                 self.stop_radio()
@@ -2849,24 +3261,27 @@ class MainWindow:
             kalite_has_data = bool(self.tree_kalite.get_children())
             yuzde_has_data = bool(self.tree_yuzde.get_children())
             tables_have_data = kalite_has_data or yuzde_has_data
-
             if not tables_have_data and self.tables_cleared_this_session:
-                if self.master.winfo_exists() and messagebox.askokcancel("Çıkış Onayı", "Tablolar temizlendi ve yeni veri girilmedi.\nÇıkmak istediğinize emin misiniz?", parent=self.master):
+                if self.master.winfo_exists() and messagebox.askokcancel("Çıkış Onayı", 
+                                                                         "Tablolar temizlendi ve yeni veri girilmedi.\nÇıkmak istediğinize emin misiniz?",
+                                                                           parent=self.master):
                     self.master.destroy()
                 return
             elif not tables_have_data and not self.tables_cleared_this_session:
                 self.master.destroy()
                 return
             else:
-                if self.master.winfo_exists() and messagebox.askokcancel("Çıkış ve Yedekle", "Programdan çıkmak ve mevcut verileri yeni zaman damgalı dosyalara yedeklemek istiyor musunuz?", parent=self.master):
+                if self.master.winfo_exists() and messagebox.askokcancel("Yedekleme Yapalım mı?", 
+                                                                         "TAMAM: Mevcut verileri yeni zaman damgalı dosyalara yedekleyelim ve çıkalım." \
+                                                                         "\n\nİPTAL: Yedekleme yapmadan çıkalım",
+                                                                           parent=self.master):
                     self.save_data_to_timestamped_csv()
+                    self.analog_saat_instance.stop()
                     self.master.destroy()
-
         finally:
             self.master.after(200, self.master.destroy)  # Güvenli kapanış
 
 if __name__ == '__main__':
     root = tk.Tk()
     app = MainWindow(root)
-    #app.run()
     root.mainloop()
