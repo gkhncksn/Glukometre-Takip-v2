@@ -3,7 +3,7 @@ Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cih
 ![Clipboard01](https://github.com/user-attachments/assets/cff6e3c1-bc1e-4f9b-bae8-5c8796fa043b)
 
 
-Öne Çıkan Özellikler:\
+<b>Öne Çıkan Özellikler:</b>\
 • Kullanıcı dostu, anlaşılır arayüz\
 • Kalite kontrol ve yüzde sapma ölçümlerinin kaydı\
 • Otomatik Veri Yedekleme\
