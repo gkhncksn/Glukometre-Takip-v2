@@ -3,29 +3,35 @@ Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cih
 ![Clipboard01](https://github.com/user-attachments/assets/6c84c8d1-6dfa-4edb-98e1-16823b02ec41)
 
 
-
 Öne Çıkan Özellikler:\
 • Kullanıcı dostu, anlaşılır arayüz\
-• Cihaz Veritabanı Yönetimi (Cihaz Ekleme, Silme, Arama)\
-• Çapraz kontroller sayesinde yanlış veri girişlerinin önlenmesi\
-• Kalite Kontrol ve Yüzde Sapma Ölçümlerinin Kaydı\
+• Kalite kontrol ve yüzde sapma ölçümlerinin kaydı\
 • Otomatik Veri Yedekleme\
-• Excel ve Word Raporları Oluşturma\
-• Günü Geçen/Yaklaşan Ölçüm Uyarıları
+• Excel ve Word raporları oluşturma\
+• Günü Geçen/Yaklaşan Ölçüm Uyarıları\
 
 Ek Özellikler:\
-• Dahili İnternet Radyosu (etkin olması için https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest adresinden "ffmpeg ...-latest-win64-gpl-....zip" dosyasını indirip, zip dosyasının içeriğini programın çalıştığı dizin içerisindeki ffmpeg klasörü içerisine atın)\
+• Ajandalı Takvim\
+• Alarm, Geri Sayım ve Kronometre Araçları\
+• Windows Notepad ve Hesap Makinası erişimi\
+• Dahili IPTV ve M3U oynatıcı\
+• Dahili İnternet Radyosu\
+• Dahili Ekran Görünüsü Alma Aracı\
+• Dahili Excel Dosya Görüntüleme Aracı\
 • Dahili Dijital Saat\
+• Zaman Geçirmek için Küçük Oyunlar\
 • Vücut Kitle İndeksi Hesaplama\
-• Takvim ve Hesap Makinası erişimi
+• Hava Durumu Bilgisi (to do)\
+• İnsülin Doz Hesaplama (to do)\
+• Diyabet Bilgilendirme ve Rehberlik (to do)\
 
 Teknik Özellikler:\
 • Python 3.11 ile geliştirildi\
-• SQLite veritabanı kullanılıyor\
-• Modern Tkinter arayüzü
+• Modern Tkinter arayüzü\
+• SQLite veritabanı ile maksimum taşınabilirlik\
 
 Sistem Gereksinimleri:\
 • Windows 7/10/11\
 • Python 3.8+\
 • 4GB RAM\
-• 100MB boş disk alanı
+• 100MB boş disk alanı\
