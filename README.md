@@ -1,6 +1,7 @@
 Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cihazlarının kalite kontrol ve yüzde sapma hesabı ile performans takibini kolaylaştırmak amacıyla geliştirilmiştir.
 
-![screenshot_2025 06 06_00-09-49](https://github.com/user-attachments/assets/2fa20dd2-b51b-4249-ba50-9b76dfece6a4)
+![screenshot_2025 06 06_00-09-49](https://github.com/user-attachments/assets/161ee99f-df3a-4fa1-9fa7-802c42615778)
+
 
 Öne Çıkan Özellikler:\
 • Kullanıcı dostu, anlaşılır arayüz\
