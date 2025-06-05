@@ -1,29 +1,27 @@
 Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cihazlarının kalite kontrol ve yüzde sapma hesabı ile performans takibini kolaylaştırmak amacıyla geliştirilmiştir.
 
+Öne Çıkan Özellikler:
+• Kullanıcı dostu, anlaşılır arayüz
+• Cihaz Veritabanı Yönetimi (Cihaz Ekleme, Silme, Arama)
+• Çapraz kontroller sayesinde yanlış veri girişlerinin önlenmesi
+• Kalite Kontrol ve Yüzde Sapma Ölçümlerinin Kaydı
+• Otomatik Veri Yedekleme
+• Excel ve Word Raporları Oluşturma
+• Günü Geçen/Yaklaşan Ölçüm Uyarıları
 
+Ek Özellikler:
+• Dahili İnternet Radyosu (etkin olması için https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest adresinden "ffmpeg ...-latest-win64-gpl-....zip" dosyasını indirip, zip dosyasının içeriğini programın çalıştığı dizin içerisindeki ffmpeg klasörü içerisine atın)
+• Dahili Dijital Saat
+• Vücut Kitle İndeksi Hesaplama
+• Takvim ve Hesap Makinası erişimi
 
-Öne Çıkan Özellikler:\n
-• Kullanıcı dostu, anlaşılır arayüz\n
-• Cihaz Veritabanı Yönetimi (Cihaz Ekleme, Silme, Arama)\n
-• Çapraz kontroller sayesinde yanlış veri girişlerinin önlenmesi\n
-• Kalite Kontrol ve Yüzde Sapma Ölçümlerinin Kaydı\n
-• Otomatik Veri Yedekleme\n
-• Excel ve Word Raporları Oluşturma\n
-• Günü Geçen/Yaklaşan Ölçüm Uyarıları\n
-\n
-Ek Özellikler:\n
-• Dahili İnternet Radyosu (etkin olması için https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest adresinden "ffmpeg ...-latest-win64-gpl-....zip" dosyasını indirip, zip dosyasının içeriğini programın çalıştığı dizin içerisindeki ffmpeg klasörü içerisine atın)\n
-• Dahili Dijital Saat\n
-• Vücut Kitle İndeksi Hesaplama\n
-• Takvim ve Hesap Makinası erişimi\n
+Teknik Özellikler:
+• Python 3.11 ile geliştirildi
+• SQLite veritabanı kullanılıyor
+• Modern Tkinter arayüzü
 
-Teknik Özellikler:\n
-• Python 3.11 ile geliştirildi\n
-• SQLite veritabanı kullanılıyor\n
-• Modern Tkinter arayüzü\n
-\n
-Sistem Gereksinimleri:\n
-• Windows 7/10/11\n
-• Python 3.8+\n
-• 4GB RAM\n
-• 100MB boş disk alanı\n
+Sistem Gereksinimleri:
+• Windows 7/10/11
+• Python 3.8+
+• 4GB RAM
+• 100MB boş disk alanı
