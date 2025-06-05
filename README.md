@@ -8,7 +8,7 @@ Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cih
 • Kalite kontrol ve yüzde sapma ölçümlerinin kaydı\
 • Otomatik Veri Yedekleme\
 • Excel ve Word raporları oluşturma\
-• Günü Geçen/Yaklaşan Ölçüm Uyarıları\
+• Günü Geçen/Yaklaşan Ölçüm Uyarıları
 
 Ek Özellikler:\
 • Ajandalı Takvim\
@@ -23,15 +23,15 @@ Ek Özellikler:\
 • Vücut Kitle İndeksi Hesaplama\
 • Hava Durumu Bilgisi (to do)\
 • İnsülin Doz Hesaplama (to do)\
-• Diyabet Bilgilendirme ve Rehberlik (to do)\
+• Diyabet Bilgilendirme ve Rehberlik (to do)
 
 Teknik Özellikler:\
 • Python 3.11 ile geliştirildi\
 • Modern Tkinter arayüzü\
-• SQLite veritabanı ile maksimum taşınabilirlik\
+• SQLite veritabanı ile maksimum taşınabilirlik
 
 Sistem Gereksinimleri:\
 • Windows 7/10/11\
 • Python 3.8+\
 • 4GB RAM\
-• 100MB boş disk alanı\
+• 100MB boş disk alanı
