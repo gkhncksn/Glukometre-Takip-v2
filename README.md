@@ -11,21 +11,21 @@ Glukometre Takip Programı, sağlık kuruluşlarında kullanılan glukometre cih
 • Kalite Kontrol ve Yüzde Sapma Ölçümlerinin Kaydı\
 • Otomatik Veri Yedekleme\
 • Excel ve Word Raporları Oluşturma\
-• Günü Geçen/Yaklaşan Ölçüm Uyarıları\
+• Günü Geçen/Yaklaşan Ölçüm Uyarıları
 
 Ek Özellikler:\
 • Dahili İnternet Radyosu (etkin olması için https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest adresinden "ffmpeg ...-latest-win64-gpl-....zip" dosyasını indirip, zip dosyasının içeriğini programın çalıştığı dizin içerisindeki ffmpeg klasörü içerisine atın)\
 • Dahili Dijital Saat\
 • Vücut Kitle İndeksi Hesaplama\
-• Takvim ve Hesap Makinası erişimi\
+• Takvim ve Hesap Makinası erişimi
 
 Teknik Özellikler:\
 • Python 3.11 ile geliştirildi\
 • SQLite veritabanı kullanılıyor\
-• Modern Tkinter arayüzü\
+• Modern Tkinter arayüzü
 
 Sistem Gereksinimleri:\
 • Windows 7/10/11\
 • Python 3.8+\
 • 4GB RAM\
-• 100MB boş disk alanı\
+• 100MB boş disk alanı
